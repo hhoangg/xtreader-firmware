@@ -39,7 +39,20 @@ class MappedInputManager {
 
   MappedInputManager(HalGPIO& gpio, const GfxRenderer& renderer) : gpio(gpio), renderer(renderer) {}
 
-  void update() const { gpio.update(); }
+  // Frame boundary: advances the real GPIO edge state, and (test builds
+  // only) clears the injected press/release edges so they read true for
+  // exactly one frame no matter how many times a caller queries them within
+  // it -- see the injected* fields below. Must be called exactly once per
+  // loop() iteration, same as gpio.update() itself; src/main.cpp's loop()
+  // calls this (not gpio.update() directly) for that reason.
+  void update() const {
+    gpio.update();
+#ifdef CP_TEST_CONSOLE
+    injectedPressPending = false;
+    injectedReleaseEdge = false;
+    injectedHeldOverrideValid = false;
+#endif
+  }
 #if FREEINK_CAP_TOUCH
   // X4 Pro delays a single power click until its frontlight double-click window
   // expires. The main loop supplies that one-frame event here.
@@ -57,9 +70,19 @@ class MappedInputManager {
   // (the release edge fires on the very next consult); holdMs > 0 keeps
   // isPressed() true for that long before the release edge fires, so
   // long-press flows gated on wasReleased()+getHeldTime() (see
-  // FileBrowserActivity's delete-on-hold) see a real hold. Either way the
-  // press edge itself is consumed exactly once by wasPressed(), just like a
-  // real button, so a single CMD:PRESS cannot drive two frames.
+  // FileBrowserActivity's delete-on-hold) see a real hold.
+  //
+  // Edge semantics match a real HalGPIO edge, not "first reader wins": a
+  // physical release stays readable by every caller for the whole frame and
+  // is cleared at the frame boundary by gpio.update() (see update() above),
+  // not by whichever code happens to query it first. Several activities
+  // query the same button more than once in one loop() pass under different
+  // conditions (FileBrowserActivity's delete-on-hold check, then its plain
+  // Back-to-parent check, is one; it is not the only one) -- a naive
+  // "consume on first read" injection made the first, failing check eat the
+  // edge and the second, real check see nothing. wasPressed()/wasReleased()/
+  // isPressed()/getHeldTime() below are therefore idempotent within a frame:
+  // update() is what clears them, not the read itself.
   void injectPress(Button button, unsigned long holdMs = 0);
 #endif
   bool hasTouch() const;
@@ -154,8 +177,21 @@ class MappedInputManager {
   bool powerConfirmClickFrame = false;
 #endif
 #ifdef CP_TEST_CONSOLE
+  // injectedPressPending: the press edge; true for exactly one frame (the
+  // one injectPress() was called on), cleared by update() -- not by
+  // wasPressed() reading it.
   mutable bool injectedPressPending = false;
-  mutable bool injectedReleasePending = false;
+  // injectedHeld: "still down, release edge not fired yet"; spans every
+  // frame from injectPress() up to (and not including) the frame the
+  // release deadline is crossed. Drives isPressed() and gates the deadline
+  // check in wasReleased().
+  mutable bool injectedHeld = false;
+  // injectedReleaseEdge: the release edge; latched true the first time
+  // wasReleased() notices the deadline has passed, stays true for every
+  // query for the rest of that same frame, cleared by update().
+  mutable bool injectedReleaseEdge = false;
+  // Mirrors injectedReleaseEdge's one-frame lifetime for getHeldTime()'s
+  // override value.
   mutable bool injectedHeldOverrideValid = false;
   mutable Button injectedButton = Button::Back;
   mutable unsigned long injectedReleaseAt = 0;

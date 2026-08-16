@@ -23,6 +23,7 @@
 #endif
 
 #include <cstring>
+#include <string>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
@@ -31,12 +32,15 @@
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "SyncCredentialStore.h"
+#include "WifiCredentialStore.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
 #include "activities/settings/SdFirmwareUpdateActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
+#include "network/HttpDownloader.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -428,6 +432,9 @@ void setup() {
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
   OPDS_STORE.loadFromFile();
+  // NVS, not the SD card (see SyncCredentialStore.h) -- no SPI/RenderLock
+  // dance needed, so it can load unconditionally at boot like the others.
+  SYNC_STORE.load();
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
@@ -583,8 +590,20 @@ static void delayWallClock(const unsigned long ms) {
 
 #ifdef CP_TEST_CONSOLE
 // Maps a CMD:PRESS / CMD:HOLD button token to the logical button it injects.
-// Only the seven physical buttons the console can actually hold are valid;
+// injectPress()/wasPressed()/wasReleased() key purely on the
+// MappedInputManager::Button value (see MappedInputManager.cpp), so this
+// works for any of them, not just the seven physical buttons on the board --
 // everything else falls through to CMDERR:unknown like any other bad command.
+//
+// NAVNEXT/NAVPREV are load-bearing for driving any list on screen: every
+// list (UiListActivity/UiTabListActivity, so Settings, its submenus, file
+// browsers, ...) moves its selection on ButtonNavigator's NavNext/NavPrevious
+// (src/util/ButtonNavigator.h), not on Up/Down/Left/Right directly -- those
+// physical buttons only *resolve into* NavNext/NavPrevious through the
+// board's own input mapping, which this console-injection path bypasses.
+// Pressing CMD:PRESS DOWN or RIGHT therefore does not move a list selection
+// at all; only CMD:PRESS NAVNEXT/NAVPREV does. PAGEBACK/PAGEFORWARD drive the
+// reader's page turns the same way.
 static bool parseTestButtonName(const String& name, MappedInputManager::Button& out) {
   if (name == "BACK") {
     out = MappedInputManager::Button::Back;
@@ -600,10 +619,252 @@ static bool parseTestButtonName(const String& name, MappedInputManager::Button& 
     out = MappedInputManager::Button::Down;
   } else if (name == "POWER") {
     out = MappedInputManager::Button::Power;
+  } else if (name == "NAVNEXT") {
+    out = MappedInputManager::Button::NavNext;
+  } else if (name == "NAVPREV") {
+    out = MappedInputManager::Button::NavPrevious;
+  } else if (name == "PAGEBACK") {
+    out = MappedInputManager::Button::PageBack;
+  } else if (name == "PAGEFORWARD") {
+    out = MappedInputManager::Button::PageForward;
   } else {
     return false;
   }
   return true;
+}
+
+// Bounded budget for CMD:HTTPGET's body-read phase, enforced from inside
+// HttpDownloader's per-chunk DataCallback (see testConsoleHttpGet). This is
+// the only phase we can interrupt from the outside: fetchUrl()'s connect/
+// TLS-handshake/header phase runs before the first callback fires, so it is
+// bounded only by HttpDownloader's own internal per-socket-op timeout
+// (HTTP_TIMEOUT_MS = 60s in HttpDownloader.cpp) -- still finite, just not
+// ours to shorten without changing HttpDownloader itself.
+constexpr unsigned long TEST_HTTPGET_BODY_TIMEOUT_MS = 20000;
+// Per-network budget while trying saved WiFi credentials, mirroring
+// WifiSelectionActivity::AUTO_CONNECTION_TIMEOUT_MS (same auto-connect path,
+// just driven synchronously instead of across activity loop() frames).
+constexpr unsigned long TEST_WIFI_PER_NETWORK_TIMEOUT_MS = 7000;
+// How much of the response body to echo back, escaped, in the [TEST] line --
+// enough to eyeball a JSON healthcheck body without dumping a whole page.
+constexpr size_t TEST_HTTPGET_BODY_PREVIEW_MAX = 200;
+
+// Appends `data` as a double-quoted JSON string, escaping control characters,
+// the quote/backslash, and any byte outside printable ASCII as \u00XX. This
+// deliberately does NOT decode UTF-8 -- each byte gets its own \u00XX escape
+// -- so it is safe over arbitrary/binary response bytes without risking a
+// malformed multi-byte sequence; a JSON parser (e.g. Python's json.loads)
+// still accepts it and recovers the original bytes one code point at a time.
+static void appendJsonEscaped(String& out, const char* data, size_t len) {
+  out += '"';
+  for (size_t i = 0; i < len; i++) {
+    const uint8_t c = static_cast<uint8_t>(data[i]);
+    switch (c) {
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        if (c < 0x20 || c >= 0x7f) {
+          char esc[7];
+          snprintf(esc, sizeof(esc), "\\u%04x", c);
+          out += esc;
+        } else {
+          out += static_cast<char>(c);
+        }
+        break;
+    }
+  }
+  out += '"';
+}
+
+// Bounded, synchronous saved-network auto-connect for CMD:HTTPGET. Mirrors
+// WifiSelectionActivity's auto-connect order (last-connected SSID first,
+// then any other saved credential) but blocks the caller instead of running
+// as async activity state -- fine here since the test console handler is
+// meant to run to completion before the next CMD: line is read, and every
+// attempt is bounded (worst case: MAX_NETWORKS saved credentials each given
+// TEST_WIFI_PER_NETWORK_TIMEOUT_MS, still finite).
+static bool testConsoleConnectWifi(std::string& outSsid, std::string& outError) {
+  if (WiFi.status() == WL_CONNECTED) {
+    outSsid = WiFi.SSID().c_str();
+    return true;
+  }
+
+  {
+    // SD card access (loadFromFile) shares SPI with the display; matches
+    // WifiSelectionActivity::onEnter()'s use of the same lock.
+    RenderLock lock;
+    WIFI_STORE.loadFromFile();
+  }
+
+  const size_t savedCount = WIFI_STORE.getCredentialCount();
+  if (savedCount == 0) {
+    outError = "no saved wifi credentials";
+    return false;
+  }
+
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);       // credentials are managed by WifiCredentialStore, not SDK NVS
+  WiFi.disconnect(true, true);  // abort any in-progress SDK auto-connect
+  delay(100);
+
+  const auto tryCredential = [](const std::string& ssid, const std::string& password) -> bool {
+    LOG_DBG("TEST", "HTTPGET: attempting saved network %s", ssid.c_str());
+    WiFi.disconnect();
+    delay(50);
+    if (!password.empty()) {
+      WiFi.begin(ssid.c_str(), password.c_str());
+    } else {
+      WiFi.begin(ssid.c_str());
+    }
+    const unsigned long deadline = millis() + TEST_WIFI_PER_NETWORK_TIMEOUT_MS;
+    while (static_cast<long>(millis() - deadline) < 0) {
+      const wl_status_t status = WiFi.status();
+      if (status == WL_CONNECTED) return true;
+      if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL) break;
+      delay(50);
+    }
+    return false;
+  };
+
+  const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
+  bool triedLast = false;
+  if (!lastSsid.empty()) {
+    const auto cred = WIFI_STORE.findCredential(lastSsid);
+    if (cred) {
+      triedLast = true;
+      if (tryCredential(cred->ssid, cred->password)) {
+        outSsid = cred->ssid;
+        return true;
+      }
+    }
+  }
+
+  for (size_t i = 0; i < savedCount; i++) {
+    const auto cred = WIFI_STORE.getCredentialAt(i);
+    if (!cred || (triedLast && cred->ssid == lastSsid)) continue;
+    if (tryCredential(cred->ssid, cred->password)) {
+      outSsid = cred->ssid;
+      return true;
+    }
+  }
+
+  outError = "failed to connect to any saved network";
+  return false;
+}
+
+// CMD:HTTPGET <url> -- probes whether this device can complete an HTTP(S)
+// request through the exact code path a real sync client would use
+// (HttpDownloader: same TLS stack, same CA-bundle verification, same
+// streaming reader). Brings WiFi up first if needed. Reports a single
+// [TEST] JSON line; see the field-by-field comments below for its shape.
+static void testConsoleHttpGet(const std::string& url) {
+  const size_t heapBeforeFree = ESP.getFreeHeap();
+  const size_t heapBeforeMaxAlloc = ESP.getMaxAllocHeap();
+  // Sampled inside the first DataCallback invocation below -- the earliest
+  // point HttpDownloader's public API exposes, which is after both the TLS
+  // handshake and the response headers have been read (fetchUrl has no hook
+  // in between). Defaults to the "before" sample if the body is empty and
+  // the callback never fires.
+  size_t heapTlsFree = heapBeforeFree;
+  size_t heapTlsMaxAlloc = heapBeforeMaxAlloc;
+  bool midHandshakeSampled = false;
+
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  bool ok = false;
+  int httpStatus = -1;  // stays -1 if the request never got an HTTP response at all
+  size_t bytesRead = 0;
+  std::string bodyPreview;
+  std::string error;
+
+  if (!wifiConnected) {
+    error = "wifi";
+  } else {
+    bool timedOut = false;
+    const unsigned long bodyDeadline = millis() + TEST_HTTPGET_BODY_TIMEOUT_MS;
+    const HttpDownloader::DataCallback onData = [&](const uint8_t* data, size_t len) -> bool {
+      if (!midHandshakeSampled) {
+        midHandshakeSampled = true;
+        heapTlsFree = ESP.getFreeHeap();
+        heapTlsMaxAlloc = ESP.getMaxAllocHeap();
+      }
+      bytesRead += len;
+      if (bodyPreview.size() < TEST_HTTPGET_BODY_PREVIEW_MAX) {
+        const size_t room = TEST_HTTPGET_BODY_PREVIEW_MAX - bodyPreview.size();
+        const size_t take = len < room ? len : room;
+        bodyPreview.append(reinterpret_cast<const char*>(data), take);
+      }
+      if (static_cast<long>(millis() - bodyDeadline) > 0) {
+        timedOut = true;
+        return false;  // abort the transfer; never block the loop indefinitely
+      }
+      return true;
+    };
+
+    ok = HttpDownloader::fetchUrl(url, onData, "", "", &httpStatus);
+
+    if (!ok) {
+      if (timedOut) {
+        error = "timeout";
+      } else if (httpStatus >= 0 && httpStatus != 200) {
+        error = "http_status";
+      } else {
+        error = "transport";  // connect/DNS/TLS failure -- no HTTP response at all
+      }
+    }
+  }
+
+  const size_t heapAfterFree = ESP.getFreeHeap();
+  const size_t heapAfterMaxAlloc = ESP.getMaxAllocHeap();
+
+  String out = "[TEST] {";
+  out += "\"wifiConnected\":";
+  out += (wifiConnected ? "true" : "false");
+  out += ",\"ssid\":";
+  appendJsonEscaped(out, ssid.data(), ssid.size());
+  out += ",\"wifiError\":";
+  appendJsonEscaped(out, wifiError.data(), wifiError.size());
+  out += ",\"ok\":";
+  out += (ok ? "true" : "false");
+  out += ",\"status\":";
+  out += String(httpStatus);
+  out += ",\"bytesRead\":";
+  out += String(static_cast<unsigned>(bytesRead));
+  out += ",\"error\":";
+  appendJsonEscaped(out, error.data(), error.size());
+  out += ",\"heapBeforeFree\":";
+  out += String(static_cast<unsigned>(heapBeforeFree));
+  out += ",\"heapBeforeMaxAlloc\":";
+  out += String(static_cast<unsigned>(heapBeforeMaxAlloc));
+  out += ",\"heapTlsFree\":";
+  out += String(static_cast<unsigned>(heapTlsFree));
+  out += ",\"heapTlsMaxAlloc\":";
+  out += String(static_cast<unsigned>(heapTlsMaxAlloc));
+  out += ",\"midHandshakeSampled\":";
+  out += (midHandshakeSampled ? "true" : "false");
+  out += ",\"heapAfterFree\":";
+  out += String(static_cast<unsigned>(heapAfterFree));
+  out += ",\"heapAfterMaxAlloc\":";
+  out += String(static_cast<unsigned>(heapAfterMaxAlloc));
+  out += ",\"bodyPreview\":";
+  appendJsonEscaped(out, bodyPreview.data(), bodyPreview.size());
+  out += "}";
+  logSerial.println(out);
 }
 #endif
 
@@ -613,7 +874,12 @@ void loop() {
   static unsigned long lastMemPrint = 0;
 
   gpio.setSharedConfirmPowerShortPressEmitsPower(SETTINGS.shortPwrBtn == CrossPointSettings::SHORT_PWRBTN::SLEEP);
-  gpio.update();
+  // mappedInputManager.update() (not a raw gpio.update()): in CP_TEST_CONSOLE
+  // builds this is also the frame boundary that clears the injected-input
+  // edges (see MappedInputManager::update()), so an injected CMD:PRESS reads
+  // true for exactly one loop() iteration, however many times an activity
+  // queries it within that iteration.
+  mappedInputManager.update();
   halTiltSensor.update(SETTINGS.tiltPageTurn, SETTINGS.orientation, activityManager.isReaderActivity());
 
   renderer.setFadingFix(SETTINGS.fadingFix);
@@ -713,6 +979,38 @@ void loop() {
       } else if (cmd == "ACTIVITY") {
         const Activity* activity = activityManager.getCurrentActivity();
         logSerial.printf("[TEST] {\"activity\":\"%s\"}\n", activity ? activity->getName().c_str() : "");
+      } else if (cmd == "SELECTED") {
+        // Reports whatever row/icon is currently highlighted, so a host
+        // script can drive menu navigation by reading real UI content
+        // instead of counting rows or probing with CONFIRM (which mutates
+        // toggle settings and triggers real side effects like a Wi-Fi scan
+        // -- see Activity::getSelectedRowInfo()'s comment for why this
+        // command exists).
+        const Activity* activity = activityManager.getCurrentActivity();
+        std::string label;
+        int index = -1;
+        int count = -1;
+        const bool supported = activity != nullptr && activity->getSelectedRowInfo(label, index, count);
+        String out = "[TEST] {\"activity\":\"";
+        out += activity ? activity->getName().c_str() : "";
+        out += "\",\"supported\":";
+        out += (supported ? "true" : "false");
+        out += ",\"selected\":";
+        appendJsonEscaped(out, label.data(), label.size());
+        out += ",\"index\":";
+        out += String(index);
+        out += ",\"count\":";
+        out += String(count);
+        out += "}";
+        logSerial.println(out);
+      } else if (cmd.startsWith("HTTPGET ")) {
+        String urlArg = cmd.substring(8);
+        urlArg.trim();
+        if (urlArg.startsWith("http://") || urlArg.startsWith("https://")) {
+          testConsoleHttpGet(std::string(urlArg.c_str()));
+        } else {
+          handled = false;
+        }
       } else if (cmd == "SLEEP") {
         // Last known-good marker for the host to compare against once the device
         // wakes back up (or to inspect if it never does). Printed before the ack,

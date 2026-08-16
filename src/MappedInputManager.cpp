@@ -303,16 +303,16 @@ void MappedInputManager::injectPress(const Button button, const unsigned long ho
   injectedReleaseAt = millis() + holdMs;
   injectedHeldMs = holdMs;
   injectedPressPending = true;
-  injectedReleasePending = true;
+  injectedHeld = true;
+  injectedReleaseEdge = false;
 }
 #endif
 
 bool MappedInputManager::wasPressed(const Button button) const {
 #ifdef CP_TEST_CONSOLE
-  if (injectedPressPending && injectedButton == button) {
-    injectedPressPending = false;
-    return true;
-  }
+  // Not consumed here: stays true for every query this frame, same as a real
+  // HalGPIO press edge would. update() clears it at the frame boundary.
+  if (injectedPressPending && injectedButton == button) return true;
 #endif
   if (button == Button::Back && wasBackGesture()) return true;
 #if FREEINK_CAP_TOUCH
@@ -323,13 +323,20 @@ bool MappedInputManager::wasPressed(const Button button) const {
 
 bool MappedInputManager::wasReleased(const Button button) const {
 #ifdef CP_TEST_CONSOLE
-  // Fires once the injected hold's duration has elapsed (immediately, for a
-  // holdMs = 0 tap), matching HalGPIO's edge-on-release semantics.
-  if (injectedReleasePending && injectedButton == button && static_cast<long>(millis() - injectedReleaseAt) >= 0) {
-    injectedReleasePending = false;
+  // Detect the deadline crossing (once the injected hold's duration has
+  // elapsed -- immediately, for a holdMs = 0 tap) and latch the release
+  // edge. Guarded by !injectedReleaseEdge so a frame with several queries
+  // for this button only performs the injectedHeld -> false transition
+  // once; every query that frame still sees the edge below.
+  if (injectedHeld && injectedButton == button && !injectedReleaseEdge &&
+      static_cast<long>(millis() - injectedReleaseAt) >= 0) {
+    injectedHeld = false;
+    injectedReleaseEdge = true;
     injectedHeldOverrideValid = true;
-    return true;
   }
+  // Not consumed here: stays true for every query this frame, same as a real
+  // HalGPIO release edge would. update() clears it at the frame boundary.
+  if (injectedReleaseEdge && injectedButton == button) return true;
 #endif
   if (button == Button::Back && wasBackGesture()) return true;
 #if FREEINK_CAP_TOUCH
@@ -340,7 +347,7 @@ bool MappedInputManager::wasReleased(const Button button) const {
 
 bool MappedInputManager::isPressed(const Button button) const {
 #ifdef CP_TEST_CONSOLE
-  if (injectedReleasePending && injectedButton == button) return true;
+  if (injectedHeld && injectedButton == button) return true;
 #endif
   return mapButton(button, &HalGPIO::isPressed);
 }
@@ -351,10 +358,9 @@ bool MappedInputManager::wasAnyReleased() const { return gpio.wasAnyReleased(); 
 
 unsigned long MappedInputManager::getHeldTime() const {
 #ifdef CP_TEST_CONSOLE
-  if (injectedHeldOverrideValid) {
-    injectedHeldOverrideValid = false;
-    return injectedHeldMs;
-  }
+  // Not consumed here (see wasReleased()'s injectedHeldOverrideValid
+  // comment): stays true for every query this frame; update() clears it.
+  if (injectedHeldOverrideValid) return injectedHeldMs;
 #endif
   if (!gpio.wasAnyPressed() && !gpio.wasAnyReleased() && touchHeldOverrideValid &&
       millis() - touchHeldOverrideAt <= TOUCH_HELD_OVERRIDE_WINDOW_MS) {

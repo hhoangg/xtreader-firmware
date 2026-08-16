@@ -22,6 +22,7 @@
 #include "SdFirmwareUpdateActivity.h"
 #include "SettingsList.h"
 #include "StatusBarSettingsActivity.h"
+#include "SyncSettingsActivity.h"
 #include "TextSettingsActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
@@ -85,6 +86,7 @@ void SettingsActivity::rebuildSettingsLists() {
   }
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
+  systemSettings.push_back(SettingInfo::Action(StrId::STR_ACCOUNT_SYNC, SettingAction::SyncSettings));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   // OTA fetches this board's own release asset (see OtaUpdater); boards whose
@@ -323,6 +325,9 @@ void SettingsActivity::toggleCurrentSetting() {
       case SettingAction::KOReaderSync:
         startActivityForResult(std::make_unique<KOReaderSettingsActivity>(renderer, mappedInput), resultHandler);
         break;
+      case SettingAction::SyncSettings:
+        startActivityForResult(std::make_unique<SyncSettingsActivity>(renderer, mappedInput), resultHandler);
+        break;
       case SettingAction::OPDSBrowser:
         startActivityForResult(std::make_unique<OpdsServerListActivity>(renderer, mappedInput), resultHandler);
         break;
@@ -416,6 +421,28 @@ void SettingsActivity::openSleepTimeoutPicker() {
         requestUpdate();
       });
 }
+
+#ifdef CP_TEST_CONSOLE
+bool SettingsActivity::getSelectedRowInfo(std::string& outLabel, int& outIndex, int& outCount) const {
+  const int ring = ringPos();
+  outIndex = ring;
+  outCount = settingsCount + 1;  // +1 for the tab band at ring 0
+  if (ring == 0) {
+    // Tab band focused: report the active category's own label. CONFIRM
+    // here cycles categories (see handleButtons()), it does not activate a
+    // row -- callers must NAVNEXT off the tab band before searching rows.
+    outLabel = tabLabel(activeTab());
+    return true;
+  }
+  const int row = ring - 1;
+  if (row < 0 || row >= settingsCount) {
+    outLabel.clear();
+    return true;
+  }
+  outLabel = rowItems_[row].label ? rowItems_[row].label : "";
+  return true;
+}
+#endif
 
 std::string SettingsActivity::settingValueText(const SettingInfo& setting) {
   if (setting.type == SettingType::TOGGLE && setting.valuePtr != nullptr) {

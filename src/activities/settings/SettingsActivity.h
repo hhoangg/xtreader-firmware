@@ -16,6 +16,7 @@ enum class SettingAction {
   RemapFrontButtons,
   CustomiseStatusBar,
   KOReaderSync,
+  SyncSettings,
   OPDSBrowser,
   Network,
   ClearCache,
@@ -205,4 +206,7 @@ class SettingsActivity final : public UiTabListActivity {
   void onEnter() override;
   void onExit() override;
   void render(RenderLock&&) override;
+#ifdef CP_TEST_CONSOLE
+  bool getSelectedRowInfo(std::string& outLabel, int& outIndex, int& outCount) const override;
+#endif
 };

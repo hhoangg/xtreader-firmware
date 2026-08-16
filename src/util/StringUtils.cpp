@@ -2,6 +2,8 @@
 
 #include <Utf8.h>
 
+#include <vector>
+
 namespace StringUtils {
 
 std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
@@ -41,6 +43,49 @@ std::string sanitizeFilename(const std::string& name, size_t maxBytes) {
   }
 
   return result.empty() ? "book" : result;
+}
+
+std::string middleEllipsis(const std::string& value, size_t maxChars) {
+  constexpr char ELLIPSIS[] = "...";
+  constexpr size_t ELLIPSIS_CHARS = 3;
+
+  // Record each codepoint's starting byte offset, plus a trailing sentinel
+  // for the end of the string, so the head/tail slices below land on UTF-8
+  // boundaries -- this is written for URLs (ASCII in practice), but a
+  // self-hoster can type anything into the custom server URL field. The
+  // sentinel (offsets[totalChars] == value.size()) is what lets
+  // offsets[totalChars - tailChars] below stay in bounds even when
+  // tailChars is 0 (an empty tail).
+  std::vector<size_t> offsets;
+  offsets.reserve(value.size() + 1);
+  const auto* p = reinterpret_cast<const unsigned char*>(value.data());
+  const unsigned char* end = p + value.size();
+  while (p < end) {
+    offsets.push_back(static_cast<size_t>(reinterpret_cast<const char*>(p) - value.data()));
+    utf8NextCodepoint(&p);
+  }
+  const size_t totalChars = offsets.size();
+  offsets.push_back(value.size());
+
+  if (totalChars <= maxChars) return value;
+
+  if (maxChars <= ELLIPSIS_CHARS) {
+    // Not enough room for any head/tail context -- just however much of the
+    // marker itself fits.
+    return std::string(ELLIPSIS).substr(0, maxChars);
+  }
+
+  // Split what's left between head and tail, favoring the head by one
+  // character when the budget is odd -- a URL's scheme/host at the front is
+  // usually the more useful half to keep intact.
+  const size_t budget = maxChars - ELLIPSIS_CHARS;
+  const size_t headChars = (budget + 1) / 2;
+  const size_t tailChars = budget - headChars;
+
+  const size_t headEndByte = offsets[headChars];
+  const size_t tailStartByte = offsets[totalChars - tailChars];
+
+  return value.substr(0, headEndByte) + ELLIPSIS + value.substr(tailStartByte);
 }
 
 }  // namespace StringUtils

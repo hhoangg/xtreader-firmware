@@ -15,6 +15,7 @@
 #include "CrossPointSettings.h"
 #include "KOReaderCredentialStore.h"
 #include "ReaderFontSizes.h"
+#include "SyncCredentialStore.h"
 #include "activities/settings/SettingsActivity.h"
 #include "util/DictionaryRegistry.h"
 
@@ -406,6 +407,15 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
               KOREADER_STORE.saveToFile();
             },
             "koSyncBehavior", StrId::STR_KOREADER_SYNC),
+        // --- CrossPoint Sync device pairing (device UI: SyncSettingsActivity /
+        // SyncPairingActivity; uses SyncCredentialStore, which persists to NVS
+        // rather than the SD card the other stores here use). Only the server
+        // URL is exposed here -- the paired access token is a never-expiring
+        // bearer credential and deliberately has no key, so it never appears
+        // in the web settings JSON.
+        SettingInfo::DynamicString(
+            StrId::STR_CROSSPOINT_SYNC_SERVER_URL, [] { return SYNC_STORE.getServerUrl(); },
+            [](const std::string& v) { SYNC_STORE.setServerUrl(v); }, "syncServerUrl", StrId::STR_ACCOUNT_SYNC),
         // --- Status Bar Settings (web-only, uses StatusBarSettingsActivity) ---
         SettingInfo::Toggle(StrId::STR_CHAPTER_PAGE_COUNT, &CrossPointSettings::statusBarChapterPageCount,
                             "statusBarChapterPageCount", StrId::STR_CUSTOMISE_STATUS_BAR),

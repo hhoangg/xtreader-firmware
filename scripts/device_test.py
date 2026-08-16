@@ -58,7 +58,16 @@ FRAMEBUFFER_HEIGHT = 480
 
 # Must match MappedInputManager::Button as exposed by CMD:PRESS / CMD:HOLD
 # in src/main.cpp's parseTestButtonName().
-VALID_BUTTONS = ("BACK", "CONFIRM", "LEFT", "RIGHT", "UP", "DOWN", "POWER")
+#
+# NAVNEXT/NAVPREV move a list selection (Settings, its submenus, file
+# browsers, ...); PAGEBACK/PAGEFORWARD turn reader pages. UP/DOWN/LEFT/RIGHT
+# are the raw physical buttons -- on real hardware those *resolve into*
+# NavNext/NavPrevious/PageBack/PageForward through the board's own input
+# mapping, but injecting them here bypasses that resolution entirely, so
+# CMD:PRESS DOWN (etc.) does not move a list selection. Use NAVNEXT/NAVPREV
+# for that.
+VALID_BUTTONS = ("BACK", "CONFIRM", "LEFT", "RIGHT", "UP", "DOWN", "POWER", "NAVNEXT", "NAVPREV", "PAGEBACK",
+                 "PAGEFORWARD")
 
 
 class DeviceTestError(Exception):
@@ -283,6 +292,16 @@ class DeviceTestConsole:
 
     def activity(self, timeout: float | None = None) -> str:
         return self.send_command("ACTIVITY", timeout).first_event()["activity"]
+
+    def selected(self, timeout: float | None = None) -> dict:
+        """CMD:SELECTED: the label of whatever row/icon is currently
+        highlighted -- {"activity", "supported", "selected", "index",
+        "count"}. Lets a caller drive menu navigation (NAVNEXT until the
+        label matches, then CONFIRM) by reading real UI content instead of
+        counting rows or probing with CONFIRM; see
+        scripts/device_tests/test_pairing.py's select_by_label() for the
+        pattern and Activity::getSelectedRowInfo() for what's implemented."""
+        return self.send_command("SELECTED", timeout).first_event()
 
 
 # --- Assertion helpers -----------------------------------------------------

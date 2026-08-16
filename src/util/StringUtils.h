@@ -34,4 +34,21 @@ inline int asciiCaseCmp(const char* a, const char* b) {
  */
 std::string sanitizeFilename(const std::string& name, size_t maxBytes = 100);
 
+/**
+ * Shortens `value` to at most maxChars characters (UTF-8 codepoints, not
+ * bytes) by replacing a middle span with "...", keeping the head and tail
+ * intact. No-op if value already fits within maxChars.
+ *
+ * For values where both ends carry meaning -- a URL's host at the front and
+ * its distinguishing tail at the back, e.g. -- unlike a plain trailing
+ * ellipsis, which for a hostname keeps only the generic prefix and throws
+ * away exactly the part that would tell two servers apart.
+ *
+ * This is a character-count heuristic, not a pixel measurement (this
+ * codebase's list rows have no built-in value-truncation of their own — see
+ * SyncSettingsActivity's Server URL row, the case this was written for), so
+ * pick maxChars conservatively for the font/row it's going into.
+ */
+std::string middleEllipsis(const std::string& value, size_t maxChars);
+
 }  // namespace StringUtils

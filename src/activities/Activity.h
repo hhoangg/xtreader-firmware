@@ -57,6 +57,23 @@ class Activity {
   // Test-console introspection (CMD:ACTIVITY): the cheapest possible
   // assertion that navigation landed where it should.
   const std::string& getName() const { return name; }
+  // Test-console introspection (CMD:SELECTED): reports whatever row/icon is
+  // currently highlighted, so a host script can drive menu navigation by
+  // reading real UI content instead of counting rows (a hardcoded row index
+  // silently picks the wrong item once a conditional row -- e.g.
+  // HomeActivity's OPDS Browser icon -- shifts everything after it; probing
+  // by pressing CONFIRM and backing out is worse still, since it mutates
+  // toggle settings in place and triggers real side effects like a Wi-Fi
+  // scan on whatever it CONFIRMs along the way).
+  //
+  // Returns false when this activity doesn't support the introspection (not
+  // a list/menu screen, or not wired up for it yet -- only the activities
+  // scripts/device_tests/test_pairing.py actually drives implement this so
+  // far). When it returns true, outIndex/outCount are always valid, but
+  // outLabel may be empty if the current selection has no text label (e.g.
+  // one of HomeActivity's recent-book cover tiles) -- callers should treat
+  // that as "keep moving", not as an error.
+  virtual bool getSelectedRowInfo(std::string& outLabel, int& outIndex, int& outCount) const { return false; }
 #endif
 
   // Start a new activity without destroying the current one

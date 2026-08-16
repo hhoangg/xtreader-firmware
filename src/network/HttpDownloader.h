@@ -34,9 +34,23 @@ class HttpDownloader {
 
   /**
    * Stream the response body to onData as it arrives, without buffering it.
+   * outStatus, if non-null, receives the final HTTP status code seen (the
+   * last redirect hop's, or the terminal response's); left untouched on a
+   * connect/TLS/DNS failure that never got a response at all.
    */
   static bool fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username = "",
-                       const std::string& password = "");
+                       const std::string& password = "", int* outStatus = nullptr);
+
+  /**
+   * POST a small JSON body and buffer the (small) response into outResponse.
+   * For short request/response exchanges -- a few hundred bytes, like the
+   * device-pairing endpoints -- not for large bodies, which should use the
+   * streaming fetchUrl() overload above instead. outStatus, if non-null,
+   * receives the HTTP status code; left untouched on a connect/TLS/DNS
+   * failure that never got a response at all.
+   */
+  static bool postJson(const std::string& url, const std::string& jsonBody, std::string& outResponse,
+                       int* outStatus = nullptr);
 
   /**
    * Download a file to the SD card with optional credentials.

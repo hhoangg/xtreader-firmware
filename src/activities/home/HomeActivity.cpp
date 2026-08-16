@@ -32,6 +32,41 @@ int HomeActivity::getMenuItemCount() const {
   return count;
 }
 
+#ifdef CP_TEST_CONSOLE
+bool HomeActivity::getSelectedRowInfo(std::string& outLabel, int& outIndex, int& outCount) const {
+  outIndex = selectorIndex;
+  outCount = getMenuItemCount();
+
+  const auto menuItems = buildMenuLabels();
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  // Mirrors render()'s selectedIndex math for GUI.drawButtonMenu(): when
+  // Continue Reading is folded into the menu, selectorIndex indexes menuItems
+  // directly; otherwise the first recentBooks.size() values of selectorIndex
+  // pick a recent-book cover tile instead (no text label -- see below).
+  const int menuIndex =
+      metrics.homeContinueReadingInMenu ? selectorIndex : selectorIndex - static_cast<int>(recentBooks.size());
+
+  if (menuIndex < 0 || menuIndex >= static_cast<int>(menuItems.size())) {
+    outLabel.clear();  // selection is on a recent-book cover tile, which has no text label
+    return true;
+  }
+  outLabel = menuItems[menuIndex];
+  return true;
+}
+#endif
+
+std::vector<const char*> HomeActivity::buildMenuLabels() const {
+  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
+                                        tr(STR_SETTINGS_TITLE)};
+  if (hasOpdsServers) {
+    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
+  }
+  if (UITheme::getInstance().getMetrics().homeContinueReadingInMenu && !recentBooks.empty()) {
+    menuItems.insert(menuItems.begin(), tr(STR_CONTINUE_READING));
+  }
+  return menuItems;
+}
+
 void HomeActivity::loadRecentBooks(int maxBooks) {
   recentBooks.clear();
   const auto& books = RECENT_BOOKS.getBooks();
@@ -305,19 +340,18 @@ void HomeActivity::render(RenderLock&&) {
                           recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
-  // Build menu items dynamically
-  std::vector<const char*> menuItems = {tr(STR_BROWSE_FILES), tr(STR_MENU_RECENT_BOOKS), tr(STR_FILE_TRANSFER),
-                                        tr(STR_SETTINGS_TITLE)};
+  // Build menu items dynamically. Labels come from buildMenuLabels() (shared
+  // with CMD:SELECTED's introspection, see HomeActivity.h); icons are built
+  // here with the exact same conditions since CMD:SELECTED has no use for them.
+  std::vector<const char*> menuItems = buildMenuLabels();
   std::vector<UIIcon> menuIcons = {Folder, Recent, Transfer, Settings};
 
   if (hasOpdsServers) {
-    menuItems.insert(menuItems.begin() + 2, tr(STR_OPDS_BROWSER));
     menuIcons.insert(menuIcons.begin() + 2, Library);
   }
 
   if (metrics.homeContinueReadingInMenu && !recentBooks.empty()) {
     // Insert Continue Reading at the top if enabled in theme
-    menuItems.insert(menuItems.begin(), tr(STR_CONTINUE_READING));
     menuIcons.insert(menuIcons.begin(), Book);
   }
 

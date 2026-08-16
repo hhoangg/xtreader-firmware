@@ -63,6 +63,14 @@ class HomeActivity final : public Activity {
   void onOpdsBrowserOpen();
 
   int getMenuItemCount() const;
+  // The menu's text labels, in display order (File Browser/Recents/[OPDS
+  // Browser]/File Transfer/Settings, with Continue Reading prepended when
+  // the active theme's homeContinueReadingInMenu is set and there's a
+  // recent book). Factored out of render() so CMD:SELECTED's accessor below
+  // can report the same list without duplicating -- or drifting from --
+  // render()'s conditional insert logic. Icons are still built inline in
+  // render(); only the text labels are shared.
+  std::vector<const char*> buildMenuLabels() const;
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
@@ -78,4 +86,7 @@ class HomeActivity final : public Activity {
   void loop() override;
   void render(RenderLock&&) override;
   bool isHomeActivity() const override { return true; }
+#ifdef CP_TEST_CONSOLE
+  bool getSelectedRowInfo(std::string& outLabel, int& outIndex, int& outCount) const override;
+#endif
 };
