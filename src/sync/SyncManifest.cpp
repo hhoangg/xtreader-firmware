@@ -267,6 +267,35 @@ bool findById(const std::string& id, ManifestIndexRecord& out) {
   return true;
 }
 
+namespace {
+// findIdByPath()'s listByPrefix callback context/trampoline -- plain
+// function pointer, not a capturing lambda (see CLAUDE.md's "Template and
+// std::function Bloat"), matching feedRemoteRecordToMerge's style in
+// FileBrowserActivity.cpp.
+struct PathMatch {
+  std::string wantPath;
+  std::string id;
+  bool found = false;
+};
+
+bool onPathCandidate(void* ctxPtr, const ManifestIndexRecord& record) {
+  auto* m = static_cast<PathMatch*>(ctxPtr);
+  if (record.path != m->wantPath) return true;  // same-prefix, not an exact match -- keep scanning
+  m->id = record.id;
+  m->found = true;
+  return false;  // exact match found -- stop
+}
+}  // namespace
+
+bool findIdByPath(const std::string& path, std::string& outId) {
+  PathMatch match;
+  match.wantPath = path;
+  if (!listByPrefix(path, &onPathCandidate, &match)) return false;
+  if (!match.found) return false;
+  outId = match.id;
+  return true;
+}
+
 bool isDownloaded(const std::string& id) {
   ManifestIndexRecord record;
   return findById(id, record) && record.downloaded;

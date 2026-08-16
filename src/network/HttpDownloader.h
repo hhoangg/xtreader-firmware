@@ -65,6 +65,17 @@ class HttpDownloader {
                        int* outStatus = nullptr, const std::string& bearerToken = "");
 
   /**
+   * Send an HTTP DELETE with no body, buffering the (small) response into
+   * outResponse -- the crosspoint-sync "force delete" route
+   * (DELETE /library/:id) is the only caller today. outStatus, if non-null,
+   * receives the HTTP status code; left untouched on a connect/TLS/DNS
+   * failure that never got a response at all, same convention as postJson.
+   * bearerToken, if non-empty, sends "Authorization: Bearer <token>".
+   */
+  static bool deleteResource(const std::string& url, std::string& outResponse, int* outStatus = nullptr,
+                             const std::string& bearerToken = "");
+
+  /**
    * Download a file to the SD card with optional credentials.
    */
   static DownloadError downloadToFile(const std::string& url, const std::string& destPath,

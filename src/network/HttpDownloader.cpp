@@ -265,6 +265,36 @@ HttpDownloader::DownloadError runPostWolf(const std::string& url, const std::str
   if (outStatus) *outStatus = status;
   return HttpDownloader::OK;
 }
+#endif
+
+#if defined(FREEINK_NET_WOLFSSL)
+// DELETE counterpart to runPostWolf(): same shape, no request body.
+HttpDownloader::DownloadError runDeleteWolf(const std::string& url, std::string& outResponse, int* outStatus,
+                                            const std::string& bearerToken) {
+  freeink::SecureHttpClient http;
+  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setInsecure();
+  if (!http.begin(url)) {
+    LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
+    return HttpDownloader::HTTP_ERROR;
+  }
+  http.setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  http.addHeader("Accept", "application/json");
+  if (!bearerToken.empty()) {
+    http.addHeader("Authorization", std::string("Bearer ") + bearerToken);
+  }
+
+  const int status = http.sendRequest("DELETE", "");
+  outResponse = http.getString();
+  http.end();
+
+  if (status < 0) {
+    LOG_ERR("HTTP", "wolfSSL DELETE failed: %s", url.c_str());
+    return HttpDownloader::HTTP_ERROR;
+  }
+  if (outStatus) *outStatus = status;
+  return HttpDownloader::OK;
+}
 #else
 // esp_http_client POST counterpart to runGet(): manual open/write/read
 // instead of esp_http_client_perform() so the body is read directly into
@@ -333,6 +363,63 @@ HttpDownloader::DownloadError runPost(const std::string& url, const std::string&
   }
   return HttpDownloader::OK;
 }
+
+// esp_http_client DELETE counterpart to runPost(): same shape, no request body.
+HttpDownloader::DownloadError runDelete(const std::string& url, std::string& outResponse, int* outStatus,
+                                        const std::string& bearerToken) {
+  esp_http_client_config_t config = {};
+  config.url = url.c_str();
+  config.method = HTTP_METHOD_DELETE;
+  config.buffer_size = HTTP_RX_BUF;
+  config.buffer_size_tx = HTTP_TX_BUF;
+  config.timeout_ms = HTTP_TIMEOUT_MS;
+  config.crt_bundle_attach = esp_crt_bundle_attach;
+  config.keep_alive_enable = true;
+
+  esp_http_client_handle_t client = esp_http_client_init(&config);
+  if (!client) {
+    LOG_ERR("HTTP", "client init failed");
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
+  esp_http_client_set_header(client, "Accept", "application/json");
+  if (!bearerToken.empty()) {
+    const std::string header = "Bearer " + bearerToken;
+    esp_http_client_set_header(client, "Authorization", header.c_str());
+  }
+
+  esp_err_t err = esp_http_client_open(client, 0);
+  if (err != ESP_OK) {
+    LOG_ERR("HTTP", "DELETE open failed: %s", esp_err_to_name(err));
+    esp_http_client_cleanup(client);
+    return HttpDownloader::HTTP_ERROR;
+  }
+
+  esp_http_client_fetch_headers(client);
+  const int status = esp_http_client_get_status_code(client);
+  if (outStatus) *outStatus = status;
+
+  char buf[READ_CHUNK];
+  while (true) {
+    const int read = esp_http_client_read(client, buf, sizeof(buf));
+    if (read < 0) {
+      LOG_ERR("HTTP", "DELETE read error after %zu bytes", outResponse.size());
+      esp_http_client_cleanup(client);
+      return HttpDownloader::HTTP_ERROR;
+    }
+    if (read == 0) break;
+    outResponse.append(buf, static_cast<size_t>(read));
+  }
+
+  const bool complete = esp_http_client_is_complete_data_received(client);
+  esp_http_client_cleanup(client);
+  if (!complete) {
+    LOG_ERR("HTTP", "DELETE incomplete: got %zu bytes", outResponse.size());
+    return HttpDownloader::HTTP_ERROR;
+  }
+  return HttpDownloader::OK;
+}
 #endif
 
 // All HTTP(S) fetches go through wolfSSL when it is the active TLS stack: it
@@ -345,6 +432,15 @@ HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::st
   return runGetWolf(url, username, password, bearerToken, sink);
 #else
   return runGet(url, username, password, bearerToken, sink);
+#endif
+}
+
+HttpDownloader::DownloadError runDeleteSecure(const std::string& url, std::string& outResponse, int* outStatus,
+                                              const std::string& bearerToken) {
+#if defined(FREEINK_NET_WOLFSSL)
+  return runDeleteWolf(url, outResponse, outStatus, bearerToken);
+#else
+  return runDelete(url, outResponse, outStatus, bearerToken);
 #endif
 }
 }  // namespace
@@ -387,6 +483,13 @@ bool HttpDownloader::postJson(const std::string& url, const std::string& jsonBod
 #else
   return runPost(url, jsonBody, outResponse, outStatus, bearerToken) == OK;
 #endif
+}
+
+bool HttpDownloader::deleteResource(const std::string& url, std::string& outResponse, int* outStatus,
+                                    const std::string& bearerToken) {
+  LOG_DBG("HTTP", "DELETE: %s", url.c_str());
+  outResponse.clear();
+  return runDeleteSecure(url, outResponse, outStatus, bearerToken) == OK;
 }
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,

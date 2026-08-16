@@ -14,6 +14,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "sync/DownloadQueue.h"
+#include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
 #include "util/StringUtils.h"
 
@@ -26,6 +27,7 @@ enum RowIndex : int {
   ROW_PAIR_ACTION = 2,
   ROW_REQUEST_BOOKS = 3,
   ROW_QUEUE = 4,
+  ROW_SYNC_NOW = 5,
 };
 
 // Character cap for the Server URL row's *value*. The list row widget draws
@@ -51,6 +53,8 @@ SyncSettingsActivity::SyncSettingsActivity(GfxRenderer& renderer, MappedInputMan
   // Label refreshed per buildScreen() call -- it toggles with queue state,
   // same as ROW_PAIR_ACTION above.
   rowItems_[ROW_QUEUE].actionValue = ROW_QUEUE;
+  rowItems_[ROW_SYNC_NOW].label = tr(STR_SYNC_NOW);
+  rowItems_[ROW_SYNC_NOW].actionValue = ROW_SYNC_NOW;
 }
 
 int SyncSettingsActivity::listCount() const { return MENU_ITEMS; }
@@ -108,6 +112,43 @@ void SyncSettingsActivity::toggleQueueCancel() {
   requestUpdate();
 }
 
+// sync_manifest::sync() -- the explicit counterpart to HomeActivity's
+// automatic once-per-boot trigger (SyncTriggerPolicy.h). Same
+// visible-while-it-happens popup HomeActivity's own trySyncLibrary() uses.
+void SyncSettingsActivity::doManifestSync() {
+  {
+    // This runs on the loop task (an activateIndex()/activity-result-handler
+    // call), not the render task, so drawing directly needs the same
+    // RenderLock FileBrowserActivity's own force-delete popups take for the
+    // same reason.
+    RenderLock lock(*this);
+    GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
+  }
+  const sync_manifest::SyncResult result = sync_manifest::sync();
+  syncNowStatus_ = result.ok ? tr(STR_SYNC_NOW_DONE) : tr(STR_SYNC_NOW_FAILED);
+  requestUpdate();
+}
+
+// Same "bring WiFi up first if needed" pattern as requestBooksTapped() above
+// -- an explicit, deliberate tap, not the automatic background trigger, so
+// bringing the radio up here is expected rather than a surprise battery cost.
+void SyncSettingsActivity::syncNowTapped() {
+  app.clearTapFlash();
+  if (WiFi.status() != WL_CONNECTED) {
+    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                           [this](const ActivityResult& result) {
+                             if (result.isCancelled) {
+                               syncNowStatus_ = tr(STR_SYNC_NOW_FAILED);
+                               requestUpdate();
+                             } else {
+                               doManifestSync();
+                             }
+                           });
+    return;
+  }
+  doManifestSync();
+}
+
 void SyncSettingsActivity::activateIndex(const int index) {
   if (index == ROW_SERVER_URL) {
     app.clearTapFlash();
@@ -133,6 +174,8 @@ void SyncSettingsActivity::activateIndex(const int index) {
     requestBooksTapped();
   } else if (index == ROW_QUEUE) {
     toggleQueueCancel();
+  } else if (index == ROW_SYNC_NOW) {
+    syncNowTapped();
   }
   // ROW_STATUS is informational only -- no action.
 }
@@ -179,6 +222,8 @@ void SyncSettingsActivity::buildScreen(UiScreen& screen) {
   const download_queue::Snapshot queueSnap = download_queue::snapshot();
   rowItems_[ROW_QUEUE].label = queueSnap.count > 0 ? tr(STR_CANCEL_DOWNLOADS) : tr(STR_DOWNLOAD_QUEUE);
   rowValues_[ROW_QUEUE] = queueSnap.count > 0 ? std::to_string(queueSnap.count) : "";
+
+  rowValues_[ROW_SYNC_NOW] = syncNowStatus_;
 
   for (int i = 0; i < MENU_ITEMS; i++) {
     rowItems_[i].value = rowValues_[i].empty() ? nullptr : rowValues_[i].c_str();

@@ -23,6 +23,20 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint8_t readerActivityLoadCount = 0;
   bool lastSleepFromReader = false;
   bool showBootScreen = true;
+  // Deferred "book finished" event: set by ReaderActivity the moment a book
+  // reaches its end, cleared by HomeActivity once the event is actually
+  // delivered (or found to have nothing to deliver) -- see
+  // src/sync/BookFinishedNotifier.h. Persisted rather than a plain in-RAM
+  // flag because this device reboots on every sleep-wake and the reader
+  // never posts the event itself: doing so from the end-of-book screen would
+  // risk a TLS session against the ~50 KB a reading session leaves, which
+  // docs/API.md calls out as *not* comfortable (unlike the ~137 KB free at
+  // the library screen, where this is actually sent). Empty means "no
+  // pending event". Holds at most one book at a time -- finishing a second
+  // book before the first is delivered (e.g. picking a suggested next book
+  // straight from the end-of-book menu, bypassing Home) overwrites it; see
+  // this task's report for why that bounded loss is an acceptable trade.
+  std::string pendingBookFinishedPath;
 
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;

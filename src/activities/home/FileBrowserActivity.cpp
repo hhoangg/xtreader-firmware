@@ -1,20 +1,25 @@
 #include "FileBrowserActivity.h"
 
+#include <DeleteScopePolicy.h>
 #include <FileBrowserMerge.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Memory.h>
+#include <WiFi.h>
 
 #include <algorithm>
 
 #include "CrossPointSettings.h"
 #include "MappedInputManager.h"
+#include "SyncCredentialStore.h"
+#include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "sync/BookServerDelete.h"
 #include "sync/DownloadQueue.h"
 #include "sync/SyncManifest.h"
 #include "util/BookCacheUtils.h"
@@ -299,6 +304,72 @@ bool FileBrowserActivity::removeDirFile(const std::string& fullPath) {
   return true;
 }
 
+void FileBrowserActivity::performLocalDelete(const std::string& fullPath) {
+  LOG_DBG("FileBrowser", "Attempting to delete: %s", fullPath.c_str());
+  if (removeDirFile(fullPath)) {
+    LOG_DBG("FileBrowser", "Deleted successfully");
+    {
+      // buildScreen() reads the row caches on the render task; see loop().
+      RenderLock lock(*this);
+      loadFiles();
+      if (files.empty()) {
+        nav.selected = 0;
+      } else if (nav.selected >= listCount()) {
+        // Move selection to the new "last" item
+        nav.selected = listCount() - 1;
+      }
+      nav.follow(listCount());
+    }
+
+    requestUpdate(true);
+  } else {
+    LOG_ERR("FileBrowser", "Failed to delete: %s", fullPath.c_str());
+  }
+}
+
+void FileBrowserActivity::performServerDeleteThenLocal(const std::string& fullPath, const std::string& manifestId) {
+  const auto proceedWithWifiUp = [this, fullPath, manifestId] {
+    {
+      // GUI.drawPopup() touches the framebuffer the render task also draws
+      // into; this runs on the loop task (an activity result-handler
+      // callback), so it needs the same RenderLock the existing basepath/
+      // loadFiles() mutations above already take for the same reason.
+      RenderLock lock(*this);
+      GUI.drawPopup(renderer, tr(STR_DELETING_FROM_SERVER));
+    }
+
+    const book_server_delete::Result result = book_server_delete::deleteFromServer(manifestId);
+    if (!result.ok) {
+      LOG_ERR("FileBrowser", "Server delete failed for id=%s (error=%s status=%d)", manifestId.c_str(),
+              result.error.c_str(), result.httpStatus);
+      {
+        RenderLock lock(*this);
+        GUI.drawPopup(renderer, tr(STR_SERVER_DELETE_FAILED));
+      }
+      // No requestUpdate() here: an immediate re-render would erase the
+      // error popup before it's readable, same as EpubReaderActivity's own
+      // STR_SAVE_PROGRESS_FAILED/STR_INDEX_FAILED popups -- it stays up
+      // until the next real input-driven redraw.
+      return;  // do NOT fall back to a local-only delete -- see the header comment
+    }
+
+    performLocalDelete(fullPath);
+  };
+
+  if (WiFi.status() != WL_CONNECTED) {
+    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                           [this, proceedWithWifiUp](const ActivityResult& res) {
+                             if (res.isCancelled) {
+                               LOG_DBG("FileBrowser", "Server delete cancelled: WiFi did not connect");
+                               return;
+                             }
+                             proceedWithWifiUp();
+                           });
+    return;
+  }
+  proceedWithWifiUp();
+}
+
 // The queue resolves the destination from the manifest record itself, so only the id travels.
 void FileBrowserActivity::requestBookDownload(const std::string& remoteId) {
   const download_queue::EnqueueOutcome outcome = download_queue::enqueue(remoteId);
@@ -373,36 +444,44 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
     if (cleanBasePath.back() != '/') cleanBasePath += "/";
     const std::string fullPath = cleanBasePath + entry;
 
-    auto handler = [this, fullPath](const ActivityResult& res) {
-      if (!res.isCancelled) {
-        LOG_DBG("FileBrowser", "Attempting to delete: %s", fullPath.c_str());
-        if (removeDirFile(fullPath)) {
-          LOG_DBG("FileBrowser", "Deleted successfully");
-          {
-            // buildScreen() reads the row caches on the render task; see loop().
-            RenderLock lock(*this);
-            loadFiles();
-            if (files.empty()) {
-              nav.selected = 0;
-            } else if (nav.selected >= listCount()) {
-              // Move selection to the new "last" item
-              nav.selected = listCount() - 1;
-            }
-            nav.follow(listCount());
-          }
+    // A downloaded book that came from the manifest is by now a plain local
+    // file (fileRemoteId is only set for placeholder rows -- see the header
+    // comment), so the only way to know it has a server-side counterpart is
+    // to ask the index by path. A directory never has a manifest id of its
+    // own. Only offered while still paired -- an id found from a stale
+    // index on an unpaired device could never actually be deleted server-side.
+    std::string manifestId;
+    const bool offerServerDelete =
+        !isDirectory && SYNC_STORE.isPaired() && sync_manifest::findIdByPath(fullPath, manifestId);
 
-          requestUpdate(true);
-        } else {
-          LOG_ERR("FileBrowser", "Failed to delete: %s", fullPath.c_str());
-        }
-      } else {
-        LOG_DBG("FileBrowser", "Delete cancelled by user");
+    auto handler = [this, fullPath, manifestId, offerServerDelete](const ActivityResult& res) {
+      const int selectedIndex = std::get<ConfirmationResult>(res.data).selectedIndex;
+      switch (file_delete_policy::resolve(offerServerDelete, selectedIndex)) {
+        case file_delete_policy::Action::Cancelled:
+          LOG_DBG("FileBrowser", "Delete cancelled by user");
+          break;
+        case file_delete_policy::Action::DeleteLocalOnly:
+          performLocalDelete(fullPath);
+          break;
+        case file_delete_policy::Action::DeleteLocalAndServer:
+          performServerDeleteThenLocal(fullPath, manifestId);
+          break;
       }
     };
 
-    std::string heading = tr(STR_DELETE) + std::string("? ");
-
-    startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, entry), handler);
+    if (offerServerDelete) {
+      // Distinct option labels, not a generic "Confirm", so the dialog
+      // states plainly which of the two destructive actions is about to
+      // happen (task brief) -- one is local-only, the other removes the
+      // book from every device on the account.
+      const StrId options[] = {StrId::STR_CANCEL, StrId::STR_DELETE_FROM_DEVICE, StrId::STR_DELETE_EVERYWHERE};
+      startActivityForResult(std::make_unique<ConfirmationActivity>(
+                                 renderer, mappedInput, tr(STR_DELETE) + std::string("? "), entry, options, 3),
+                             handler);
+    } else {
+      std::string heading = tr(STR_DELETE) + std::string("? ");
+      startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput, heading, entry), handler);
+    }
     return;
   } else {
     // --- SHORT PRESS ACTION: OPEN/NAVIGATE ---

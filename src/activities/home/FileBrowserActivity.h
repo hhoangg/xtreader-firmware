@@ -16,6 +16,17 @@ class FileBrowserActivity final : public UiListActivity {
  private:
   // Deletion
   bool removeDirFile(const std::string& fullPath);
+  // Local-only half of a delete: removeDirFile() + cache cleanup + refresh
+  // the row list. Shared by both the plain 2-way dialog and the "Delete from
+  // device" branch of the 3-way force-delete dialog.
+  void performLocalDelete(const std::string& fullPath);
+  // "Delete everywhere" branch: DELETE /library/:id (book_server_delete),
+  // bringing WiFi up first if needed (an explicit, already-confirmed
+  // destructive action, same as SyncSettingsActivity's Request Books), then
+  // performLocalDelete() only if the server call actually succeeded -- a
+  // failed server delete must not silently fall back to a local-only one,
+  // or "delete everywhere" would sometimes quietly mean "delete here".
+  void performServerDeleteThenLocal(const std::string& fullPath, const std::string& manifestId);
 
   Mode mode = Mode::Books;
 

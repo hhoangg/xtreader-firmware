@@ -67,9 +67,18 @@ struct FilePathResult {
   std::string path;
 };
 
-using ResultVariant =
-    std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult, IntervalResult,
-                 PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult, FilePathResult>;
+// Which option the user picked on a ConfirmationActivity dialog. Index 0 is
+// always Cancel by OptionPopup's convention (isCancelled mirrors that for
+// callers that only care about yes/no); a caller offering a 3rd option (see
+// FileBrowserActivity's force-delete "also delete on the server" choice)
+// reads selectedIndex to tell the 2nd option from the 3rd.
+struct ConfirmationResult {
+  int selectedIndex = 0;
+};
+
+using ResultVariant = std::variant<std::monostate, WifiResult, KeyboardResult, MenuResult, ChapterResult, PercentResult,
+                                   IntervalResult, PageResult, ProgressChangeResult, NetworkModeResult, FootnoteResult,
+                                   FilePathResult, ConfirmationResult>;
 
 struct ActivityResult {
   bool isCancelled = false;

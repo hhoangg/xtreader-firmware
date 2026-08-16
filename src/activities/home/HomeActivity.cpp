@@ -6,7 +6,9 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <SyncTriggerPolicy.h>
 #include <Utf8.h>
+#include <WiFi.h>
 #include <Xtc.h>
 
 #include <algorithm>
@@ -18,8 +20,22 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "SyncCredentialStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "sync/BookFinishedNotifier.h"
+#include "sync/SyncManifest.h"
+
+namespace {
+// Once-per-boot latch for trySyncLibrary(): HomeActivity is destroyed and
+// recreated every time the library screen is (re-)entered (goHome() calls
+// ActivityManager::replaceActivity()), so a member flag would reset on every
+// visit; this plain static survives across those instances and resets only
+// on a real reboot -- which this device also goes through on every sleep
+// wake (see SyncTriggerPolicy.h), so "once per boot" and "once per wake"
+// are the same event here.
+bool manifestSyncAttemptedThisBoot = false;
+}  // namespace
 
 int HomeActivity::getMenuItemCount() const {
   int count = 4;  // File Browser, Recents, File transfer, Settings
@@ -377,7 +393,46 @@ void HomeActivity::render(RenderLock&&) {
   } else if (!recentsLoaded && !recentsLoading) {
     recentsLoading = true;
     loadRecentCovers(metrics.homeCoverHeight);
+  } else {
+    trySyncLibrary();
+    tryDeliverPendingBookFinished();
   }
+}
+
+void HomeActivity::trySyncLibrary() {
+  if (!sync_trigger::shouldAutoSync(SYNC_STORE.isPaired(), WiFi.status() == WL_CONNECTED,
+                                    manifestSyncAttemptedThisBoot)) {
+    return;
+  }
+  manifestSyncAttemptedThisBoot = true;
+
+  // Visible while it happens (task brief): same blocking-popup pattern
+  // loadRecentCovers() already uses above. This runs from render(), already
+  // on the render task, so no RenderLock is needed here (contrast
+  // FileBrowserActivity's force-delete popups, which run from the loop task
+  // and do need one).
+  GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
+  sync_manifest::sync();  // result not surfaced here; FileBrowserActivity reads whatever landed
+  requestUpdate();        // redraw Home without the popup
+}
+
+void HomeActivity::tryDeliverPendingBookFinished() {
+  if (!sync_trigger::shouldDeliverPendingBookFinished(!APP_STATE.pendingBookFinishedPath.empty(), SYNC_STORE.isPaired(),
+                                                      WiFi.status() == WL_CONNECTED, bookFinishedAttemptedThisVisit)) {
+    return;
+  }
+  bookFinishedAttemptedThisVisit = true;
+
+  // No popup: unlike trySyncLibrary(), there is nothing for the owner to
+  // see change, and this is a background signal, not something the reader
+  // asked for -- see BookFinishedNotifier.h. Still headroom-safe to block
+  // the render task briefly for, same as the sync above.
+  if (book_finished_notifier::tryDeliver(APP_STATE.pendingBookFinishedPath)) {
+    APP_STATE.pendingBookFinishedPath.clear();
+    APP_STATE.saveToFile();
+  }
+  // else: leave the pending path set -- tryDeliver() already logged why,
+  // and shouldDeliverPendingBookFinished() will retry on the next visit.
 }
 
 void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToReader(path); }

@@ -174,6 +174,19 @@ void ReaderActivity::render(RenderLock&&) {
     if (!endOfBookOptions) {
       endOfBookOptions = makeUniqueNoThrow<EndOfBookOptions>(renderer);
       if (!endOfBookOptions) LOG_ERR("READER", "OOM: EndOfBookOptions");
+      // This branch only runs on the first render after isAtEndOfBook()
+      // turns true (later renders reuse the existing endOfBookOptions, and
+      // clearEndOfBookOptionsIfNeeded() nulls it back out on leaving
+      // end-of-book) -- exactly the "book actually finished" moment, and
+      // exactly once per finish, independent of whether the allocation
+      // above succeeded. Only *recorded* here, not sent: this is the render
+      // task, mid-book, with the book/cache/framebuffer all still resident
+      // (~50 KB free per docs/API.md, not the ~137 KB the actual POST needs
+      // to be comfortable) -- see BookFinishedNotifier.h for where and why
+      // the send itself happens instead (HomeActivity, once back at the
+      // library screen).
+      APP_STATE.pendingBookFinishedPath = bookPath;
+      APP_STATE.saveToFile();
     }
     renderer.clearScreen();
     if (endOfBookOptions) {

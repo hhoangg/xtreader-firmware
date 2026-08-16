@@ -80,6 +80,22 @@ bool listByPrefix(const std::string& folderPrefix, ManifestIndexPrefixScan::Matc
 // renames and moves"). Returns true and fills `out` only if found.
 bool findById(const std::string& id, ManifestIndexRecord& out);
 
+// Looks up a manifest id by its exact local path -- the reverse of
+// findById(), for a book that is already a plain local file (loadFiles()'s
+// normal directory scan, not a placeholder row: once a book is downloaded it
+// has no fileRemoteId of its own, see FileBrowserActivity.h). Built on
+// listByPrefix(path, ...): `path` is a leaf file path, not a folder prefix,
+// so the "starts with" scan is fed the full path and only a record whose
+// path is exactly equal to it is accepted; every other record sharing that
+// prefix (there shouldn't be any for a real file path) is skipped rather
+// than matched. Used by FileBrowserActivity's force-delete option (only
+// offered when a local file has a known manifest id) and by ReaderActivity's
+// book-finished telemetry (POST /events/book-finished's bookId). Returns
+// true and fills `outId` only if an exact match is found; false for "not
+// synced", "no index yet", and "no matching entry" alike, same "nothing
+// found isn't an error" contract as the read queries above.
+bool findIdByPath(const std::string& path, std::string& outId);
+
 // Convenience over findById(): true only if `id` exists in the index and
 // its `downloaded` flag is set.
 bool isDownloaded(const std::string& id);

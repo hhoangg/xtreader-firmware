@@ -23,7 +23,15 @@ class SyncSettingsActivity final : public UiListActivity {
   //    has queued/downloading, doubling as the "get out" cancel action
   //    (download_queue::cancelAll()) -- the same single-row,
   //    state-dependent-label pattern ROW_PAIR_ACTION already uses below.
-  static constexpr int MENU_ITEMS = 5;
+  //
+  // A 6th row, added by this task: Sync Now (sync_manifest::sync(), the
+  // explicit counterpart to HomeActivity's automatic once-per-boot trigger --
+  // see SyncTriggerPolicy.h). Appended at the end, after the fixed rows
+  // above, rather than inserted among them: scripts/device_tests/test_pairing.py
+  // reads this hub's rows by a fixed leading count (HUB_ROW_COUNT) to find
+  // the Pair/Unlink action at index 2, and inserting a row earlier would
+  // shift that index.
+  static constexpr int MENU_ITEMS = 6;
 #ifdef CP_TEST_CONSOLE
   bool getSelectedRowInfo(std::string& outLabel, int& outIndex, int& outCount) const override;
 #endif
@@ -53,4 +61,10 @@ class SyncSettingsActivity final : public UiListActivity {
   void requestBooksTapped();
   void doRequestBooks();
   void toggleQueueCancel();
+
+  // Same transient-status pattern as requestBooksStatus_ above, for the Sync
+  // Now row.
+  std::string syncNowStatus_;
+  void syncNowTapped();
+  void doManifestSync();
 };

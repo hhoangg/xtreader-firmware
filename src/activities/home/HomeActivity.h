@@ -76,6 +76,26 @@ class HomeActivity final : public Activity {
   void freeCoverBuffer();     // Free the stored cover buffer
   void loadRecentBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
+  // Automatic "check whether there are new files" sync: runs at most once
+  // per boot, the first time the library screen is reached, and only if
+  // already paired and WiFi is already connected (see
+  // lib/SyncManifest/SyncTriggerPolicy.h for the exact rule and why). Called
+  // from render(), right after the recent-covers loading stage, on the same
+  // "blocking with a visible popup" pattern loadRecentCovers() itself uses.
+  void trySyncLibrary();
+  // Delivers CrossPointState::pendingBookFinishedPath, if there is one and
+  // conditions allow (see SyncTriggerPolicy.h's
+  // shouldDeliverPendingBookFinished()) -- the reporting half of
+  // ReaderActivity's book-finished detection, deferred to here for heap
+  // headroom (see BookFinishedNotifier.h). Gated per-visit
+  // (bookFinishedAttemptedThisVisit, a plain member -- reset on every fresh
+  // HomeActivity, unlike trySyncLibrary()'s per-boot static), not per boot:
+  // a small telemetry POST is cheap enough to retry on every distinct visit,
+  // and doing so lets a second book finished later in the same boot still
+  // get reported once the user leaves and returns to Home, without waiting
+  // for the next reboot.
+  void tryDeliverPendingBookFinished();
+  bool bookFinishedAttemptedThisVisit = false;
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

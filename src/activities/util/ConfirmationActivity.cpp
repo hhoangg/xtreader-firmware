@@ -9,6 +9,16 @@ ConfirmationActivity::ConfirmationActivity(GfxRenderer& renderer, MappedInputMan
                                            const std::string& heading, const std::string& body)
     : Activity("Confirmation", renderer, mappedInput), heading(heading), body(body) {}
 
+ConfirmationActivity::ConfirmationActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,
+                                           const std::string& heading, const std::string& body,
+                                           const StrId* optionLabelsIn, const int optionCountIn)
+    : Activity("Confirmation", renderer, mappedInput), heading(heading), body(body) {
+  optionCount = (optionCountIn < 2) ? 2 : (optionCountIn > MAX_OPTIONS ? MAX_OPTIONS : optionCountIn);
+  for (int i = 0; i < optionCount; i++) {
+    optionLabels[i] = optionLabelsIn[i];
+  }
+}
+
 void ConfirmationActivity::onEnter() {
   Activity::onEnter();
 
@@ -26,10 +36,16 @@ void ConfirmationActivity::onEnter() {
   // (centered) doesn't cover it.
   startY = renderer.getScreenHeight() / 6;
 
-  const char* options[] = {I18N.get(StrId::STR_CANCEL), I18N.get(StrId::STR_CONFIRM)};
-  confirmPopup.show(safeHeading.c_str(), options, 2, 0, [this](int idx) {
-    ActivityResult res;
-    res.isCancelled = (idx != 1);
+  const char* options[MAX_OPTIONS];
+  for (int i = 0; i < optionCount; i++) {
+    options[i] = I18N.get(optionLabels[i]);
+  }
+  confirmPopup.show(safeHeading.c_str(), options, optionCount, 0, [this](int idx) {
+    ActivityResult res{ConfirmationResult{idx}};
+    // Index 0 is always Cancel by convention (see the header); this keeps
+    // isCancelled meaningful for every existing 2-arg caller that only
+    // checks that field, unchanged from before the 3-option variant existed.
+    res.isCancelled = (idx == 0);
     setResult(std::move(res));
     finish();
   });

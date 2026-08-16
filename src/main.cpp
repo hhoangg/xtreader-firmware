@@ -42,6 +42,7 @@
 #include "images/LoadingIcon.h"
 #include "network/HttpDownloader.h"
 #include "sync/BookDownloader.h"
+#include "sync/BookServerDelete.h"
 #include "sync/DownloadQueue.h"
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
@@ -1129,8 +1130,12 @@ static void testConsoleRequestBooks() {
 }
 
 // CMD:BOOKFINISHED <id> -- POST /events/book-finished with {"bookId": id}.
-// Brings WiFi up first. Not wired into ReaderActivity's own "book finished"
-// detection by this task -- see this task's report for why.
+// Brings WiFi up first. Exercises the same telemetry::bookFinished() call
+// book_finished_notifier::tryDeliver() makes (src/sync/BookFinishedNotifier.cpp)
+// once HomeActivity actually delivers a pending event, but synchronously and
+// with an explicit id, rather than finishing a real book and waiting for the
+// device to reach Home. See CMD:BOOKFINISHEDPENDING to inspect the real
+// deferred flow (ReaderActivity records -> HomeActivity delivers) instead.
 static void testConsoleBookFinished(const std::string& id) {
   std::string ssid;
   std::string wifiError;
@@ -1139,6 +1144,43 @@ static void testConsoleBookFinished(const std::string& id) {
   telemetry::TelemetryResult result;
   if (wifiConnected) {
     result = telemetry::bookFinished(id);
+  } else {
+    result.error = "wifi";
+  }
+
+  logSerial.printf("[TEST] {\"wifiConnected\":%s,\"ok\":%s,\"httpStatus\":%d,\"error\":\"%s\"}\n",
+                   wifiConnected ? "true" : "false", result.ok ? "true" : "false", result.httpStatus,
+                   result.error.c_str());
+}
+
+// CMD:BOOKFINISHEDPENDING -- reports CrossPointState::pendingBookFinishedPath
+// as-is, no network, no mutation. Lets a host-side device test confirm
+// ReaderActivity actually recorded a finish (read this right after reading a
+// real book to its last page) and later confirm HomeActivity cleared it
+// (read this again after navigating back to Home) -- see
+// src/activities/reader/ReaderActivity.cpp's isAtEndOfBook() branch and
+// src/activities/home/HomeActivity.cpp's tryDeliverPendingBookFinished().
+static void testConsoleBookFinishedPending() {
+  String out = "[TEST] {\"pendingPath\":";
+  appendJsonEscaped(out, APP_STATE.pendingBookFinishedPath.data(), APP_STATE.pendingBookFinishedPath.size());
+  out += "}";
+  logSerial.println(out);
+}
+
+// CMD:SERVERDELETE <id> -- DELETE /library/:id (src/sync/BookServerDelete.h),
+// the "also delete on the server" half of FileBrowserActivity's force-delete
+// option. Brings WiFi up first. WARNING: this is destructive and
+// irreversible against the real paired account's library -- point it at a
+// disposable test book, not a real one, same caution as CMD:BOOKDOWNLOAD's
+// counterpart is safe (a download) but this is not.
+static void testConsoleServerDelete(const std::string& id) {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  book_server_delete::Result result;
+  if (wifiConnected) {
+    result = book_server_delete::deleteFromServer(id);
   } else {
     result.error = "wifi";
   }
@@ -1325,6 +1367,16 @@ void loop() {
         idArg.trim();
         if (idArg.length() > 0) {
           testConsoleBookFinished(std::string(idArg.c_str()));
+        } else {
+          handled = false;
+        }
+      } else if (cmd == "BOOKFINISHEDPENDING") {
+        testConsoleBookFinishedPending();
+      } else if (cmd.startsWith("SERVERDELETE ")) {
+        String idArg = cmd.substring(13);
+        idArg.trim();
+        if (idArg.length() > 0) {
+          testConsoleServerDelete(std::string(idArg.c_str()));
         } else {
           handled = false;
         }
