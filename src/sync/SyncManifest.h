@@ -1,0 +1,90 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+#include "ManifestIndexFormat.h"
+#include "ManifestIndexQuery.h"
+
+/**
+ * Fetches GET /library/manifest (crosspoint-sync docs/API.md) and persists
+ * it to the SD card as a local, sorted, line-oriented index -- the next
+ * layer above device pairing (SyncCredentialStore/DevicePairingProtocol),
+ * fetching the book list. No downloading and no file-browser UI here; see
+ * SyncManifest.cpp's top-of-file comment for the full rationale and the
+ * decisions this task leaves open.
+ *
+ * Everything that can be host-tested (NDJSON parsing across chunk/UTF-8
+ * boundaries, pagination bookkeeping, the index file format, and the three
+ * read queries below) lives in lib/SyncManifest and has no Arduino/ESP-IDF
+ * dependency -- see test/sync_manifest_parser and test/sync_manifest_index.
+ * This file is the thin, device-only glue that drives HttpDownloader and
+ * HalStorage around that tested core, mirroring how
+ * src/activities/settings/SyncPairingActivity.cpp drives
+ * lib/DevicePairing's protocol/poller classes.
+ */
+namespace sync_manifest {
+
+// Where the local index lives, following README.md's ".crosspoint cache
+// directory" convention. INDEX_TMP_PATH is written first and renamed over
+// INDEX_PATH only once a full sync completes -- see sync()'s doc comment.
+constexpr char INDEX_PATH[] = "/.crosspoint/remote.idx";
+constexpr char INDEX_TMP_PATH[] = "/.crosspoint/remote.idx.tmp";
+
+// Free heap + largest allocatable block, in bytes -- the task brief's
+// "log free heap and largest block" pair, sampled at the three points it
+// asks for (see SyncResult below). ESP.getFreeHeap()/getMaxAllocHeap().
+struct HeapSample {
+  uint32_t freeHeap = 0;
+  uint32_t maxAllocHeap = 0;
+};
+
+struct SyncResult {
+  bool ok = false;
+  std::string error;  // empty on success; a short machine-readable reason otherwise (see sync()'s .cpp)
+  uint32_t pagesFetched = 0;
+  uint32_t entriesWritten = 0;
+  uint32_t totalCount = 0;  // the server's totalCount, as of the last trailer seen
+
+  HeapSample beforeRequest;    // before Wi-Fi/TLS/anything -- the sync's starting point
+  HeapSample afterHandshake;   // inside the first page's first response-body callback (TLS + headers done)
+  HeapSample afterLastPage;    // after the whole sync (all pages, index written and renamed into place)
+};
+
+// Fetches the full manifest (no `since` -- always a full listing, never a
+// delta; see SyncManifest.cpp for why) from the currently paired account
+// and replaces INDEX_PATH with it. Requires SYNC_STORE.isPaired() and a
+// connected network; neither is brought up here -- see CMD:MANIFESTSYNC in
+// main.cpp, which does both, for how this is exercised today ahead of any
+// UI trigger.
+SyncResult sync();
+
+// --- Read-side queries over the on-SD index --------------------------------
+// All three read INDEX_PATH in small fixed-size chunks, never the whole
+// file at once -- same "peak memory independent of library size" reasoning
+// as sync() itself, applied to reading (see ManifestIndexReader.h). Safe to
+// call even if a sync has never run: all three then report "nothing found"
+// rather than an error, so a caller doesn't need to check for the index's
+// existence separately.
+
+// Calls onMatch, in sorted order, for every entry whose path starts with
+// `folderPrefix` -- how the (future) file browser is meant to render a
+// folder: scan the sorted index rather than build a tree. Returns false
+// only on a genuine read/parse error (a missing index or zero matches both
+// return true). `ctx` is passed back to onMatch unchanged; the caller owns
+// it and must keep it alive for the duration of this call.
+bool listByPrefix(const std::string& folderPrefix, ManifestIndexPrefixScan::MatchCallback onMatch, void* ctx);
+
+// Looks up a single entry by its stable id -- how a rename is told apart
+// from a new book (crosspoint-sync docs/API.md: "id is stable across
+// renames and moves"). Returns true and fills `out` only if found.
+bool findById(const std::string& id, ManifestIndexRecord& out);
+
+// Convenience over findById(): true only if `id` exists in the index and
+// its `downloaded` flag is set. Always false today -- nothing sets that
+// flag yet, since this task doesn't download books -- but the query is
+// wired up now so a future downloader only has to flip the flag, not add
+// a new lookup path.
+bool isDownloaded(const std::string& id);
+
+}  // namespace sync_manifest

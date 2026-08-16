@@ -37,9 +37,14 @@ class HttpDownloader {
    * outStatus, if non-null, receives the final HTTP status code seen (the
    * last redirect hop's, or the terminal response's); left untouched on a
    * connect/TLS/DNS failure that never got a response at all.
+   *
+   * bearerToken, if non-empty, sends "Authorization: Bearer <token>" and
+   * takes precedence over username/password Basic auth -- crosspoint-sync's
+   * device-authenticated routes (GET /library/manifest, etc.) use an opaque
+   * bearer token (see SyncCredentialStore), not Basic auth.
    */
   static bool fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username = "",
-                       const std::string& password = "", int* outStatus = nullptr);
+                       const std::string& password = "", int* outStatus = nullptr, const std::string& bearerToken = "");
 
   /**
    * POST a small JSON body and buffer the (small) response into outResponse.

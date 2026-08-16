@@ -41,6 +41,7 @@
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "network/HttpDownloader.h"
+#include "sync/SyncManifest.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -866,6 +867,59 @@ static void testConsoleHttpGet(const std::string& url) {
   out += "}";
   logSerial.println(out);
 }
+
+// CMD:MANIFESTSYNC -- probes GET /library/manifest end to end against the
+// paired sync account, through the exact code path a real sync would use
+// (sync_manifest::sync(): HttpDownloader with a Bearer token, streamed
+// through ManifestStreamParser, written to /.crosspoint/remote.idx). Brings
+// WiFi up first, same as CMD:HTTPGET. Reports a single [TEST] JSON line
+// carrying the three heap samples the sync brief asks for -- before the
+// request, after the first page's TLS handshake, after the last page --
+// plus how many pages/entries were fetched and any error code.
+static void testConsoleManifestSync() {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  sync_manifest::SyncResult result;
+  if (wifiConnected) {
+    result = sync_manifest::sync();
+  } else {
+    result.error = "wifi";
+  }
+
+  String out = "[TEST] {";
+  out += "\"wifiConnected\":";
+  out += (wifiConnected ? "true" : "false");
+  out += ",\"ssid\":";
+  appendJsonEscaped(out, ssid.data(), ssid.size());
+  out += ",\"wifiError\":";
+  appendJsonEscaped(out, wifiError.data(), wifiError.size());
+  out += ",\"ok\":";
+  out += (result.ok ? "true" : "false");
+  out += ",\"error\":";
+  appendJsonEscaped(out, result.error.data(), result.error.size());
+  out += ",\"pagesFetched\":";
+  out += String(static_cast<unsigned>(result.pagesFetched));
+  out += ",\"entriesWritten\":";
+  out += String(static_cast<unsigned>(result.entriesWritten));
+  out += ",\"totalCount\":";
+  out += String(static_cast<unsigned>(result.totalCount));
+  out += ",\"heapBeforeFree\":";
+  out += String(static_cast<unsigned>(result.beforeRequest.freeHeap));
+  out += ",\"heapBeforeMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.beforeRequest.maxAllocHeap));
+  out += ",\"heapTlsFree\":";
+  out += String(static_cast<unsigned>(result.afterHandshake.freeHeap));
+  out += ",\"heapTlsMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.afterHandshake.maxAllocHeap));
+  out += ",\"heapAfterFree\":";
+  out += String(static_cast<unsigned>(result.afterLastPage.freeHeap));
+  out += ",\"heapAfterMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.afterLastPage.maxAllocHeap));
+  out += "}";
+  logSerial.println(out);
+}
 #endif
 
 void loop() {
@@ -1011,6 +1065,8 @@ void loop() {
         } else {
           handled = false;
         }
+      } else if (cmd == "MANIFESTSYNC") {
+        testConsoleManifestSync();
       } else if (cmd == "SLEEP") {
         // Last known-good marker for the host to compare against once the device
         // wakes back up (or to inspect if it never does). Printed before the ack,

@@ -1,0 +1,166 @@
+#include <gtest/gtest.h>
+
+#include <string>
+#include <vector>
+
+#include "ManifestIndexFormat.h"
+#include "ManifestIndexQuery.h"
+
+namespace {
+
+ManifestIndexRecord makeRecord(const std::string& id, const std::string& path, uint64_t sizeBytes = 100,
+                               const std::string& hash = "hash", uint64_t updatedAt = 1755300000,
+                               bool downloaded = false) {
+  ManifestIndexRecord r;
+  r.id = id;
+  r.path = path;
+  r.sizeBytes = sizeBytes;
+  r.contentHash = hash;
+  r.updatedAt = updatedAt;
+  r.downloaded = downloaded;
+  return r;
+}
+
+// --- ManifestIndexFormat: format/parse round trip -------------------------
+
+TEST(ManifestIndexFormat, RoundTripsAllFields) {
+  const auto record = makeRecord("bok_1", "/Kỹ năng/Đắc Nhân Tâm.epub", 3014656, "aaa111deadbeef", 1755300000, true);
+  const std::string line = formatIndexLine(record);
+  EXPECT_EQ(line.back(), '\n');
+
+  ManifestIndexRecord parsed;
+  // formatIndexLine includes the trailing '\n'; parseIndexLine's contract
+  // (like parseManifestLine's) is a line with that already stripped -- as
+  // LineChunker would hand it over.
+  ASSERT_TRUE(parseIndexLine(line.data(), line.size() - 1, parsed));
+  EXPECT_EQ(parsed.id, record.id);
+  EXPECT_EQ(parsed.path, record.path);
+  EXPECT_EQ(parsed.sizeBytes, record.sizeBytes);
+  EXPECT_EQ(parsed.contentHash, record.contentHash);
+  EXPECT_EQ(parsed.updatedAt, record.updatedAt);
+  EXPECT_EQ(parsed.downloaded, record.downloaded);
+}
+
+TEST(ManifestIndexFormat, RejectsALineWithTooFewFields) {
+  const std::string malformed = "bok_1|/path.epub|100|hash";  // missing updatedAt + downloaded
+  ManifestIndexRecord out;
+  EXPECT_FALSE(parseIndexLine(malformed.data(), malformed.size(), out));
+}
+
+TEST(ManifestIndexFormat, RejectsALineWithTooManyFields) {
+  const std::string malformed = "bok_1|/path.epub|100|hash|1755300000|0|extra";
+  ManifestIndexRecord out;
+  EXPECT_FALSE(parseIndexLine(malformed.data(), malformed.size(), out));
+}
+
+TEST(ManifestIndexFormat, RejectsNonNumericSizeBytes) {
+  const std::string malformed = "bok_1|/path.epub|not-a-number|hash|1755300000|0";
+  ManifestIndexRecord out;
+  EXPECT_FALSE(parseIndexLine(malformed.data(), malformed.size(), out));
+}
+
+TEST(ManifestIndexFormat, RejectsABadDownloadedFlag) {
+  const std::string malformed = "bok_1|/path.epub|100|hash|1755300000|maybe";
+  ManifestIndexRecord out;
+  EXPECT_FALSE(parseIndexLine(malformed.data(), malformed.size(), out));
+}
+
+TEST(ManifestIndexFormat, RejectsAnEmptyLine) {
+  ManifestIndexRecord out;
+  EXPECT_FALSE(parseIndexLine("", 0, out));
+}
+
+// --- ManifestIndexPrefixScan -----------------------------------------------
+
+bool collectMatchedId(void* ctx, const ManifestIndexRecord& r) {
+  static_cast<std::vector<std::string>*>(ctx)->push_back(r.id);
+  return true;
+}
+
+// A small sorted-by-path index spanning three folders, mirroring what
+// SyncManifest.cpp would have written from a real manifest sync.
+std::string buildSampleIndex() {
+  std::string out;
+  out += formatIndexLine(makeRecord("bok_1", "/Kỹ năng/Đắc Nhân Tâm.epub"));
+  out += formatIndexLine(makeRecord("bok_2", "/Kỹ năng/Nghĩ Giàu Làm Giàu.epub"));
+  out += formatIndexLine(makeRecord("bok_3", "/Tiểu thuyết/Số Đỏ.epub"));
+  out += formatIndexLine(makeRecord("bok_4", "/Văn học/Chí Phèo.epub"));
+  out += formatIndexLine(makeRecord("bok_5", "/Văn học/Nhà Giả Kim.epub", 100, "hash", 1755300000, true));
+  return out;
+}
+
+TEST(ManifestIndexPrefixScan, ReturnsExactlyTheEntriesUnderAFolder) {
+  const std::string index = buildSampleIndex();
+  std::vector<std::string> matchedIds;
+  ManifestIndexPrefixScan scan("/Kỹ năng/", &collectMatchedId, &matchedIds);
+  scan.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  EXPECT_FALSE(scan.hasError());
+  EXPECT_EQ(matchedIds, (std::vector<std::string>{"bok_1", "bok_2"}));
+}
+
+TEST(ManifestIndexPrefixScan, ReturnsExactlyTheEntriesUnderTheLastFolder) {
+  // Regression case for the "runs to EOF" branch: the matching folder is the
+  // last one in the index, so the scan never gets a chance to see a record
+  // that has moved past the prefix's range -- it must still report both
+  // matches and end without an error.
+  const std::string index = buildSampleIndex();
+  std::vector<std::string> matchedIds;
+  ManifestIndexPrefixScan scan("/Văn học/", &collectMatchedId, &matchedIds);
+  scan.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  EXPECT_FALSE(scan.hasError());
+  EXPECT_EQ(matchedIds, (std::vector<std::string>{"bok_4", "bok_5"}));
+}
+
+TEST(ManifestIndexPrefixScan, ReturnsNothingForAFolderThatDoesNotExist) {
+  const std::string index = buildSampleIndex();
+  std::vector<std::string> matchedIds;
+  ManifestIndexPrefixScan scan("/Nonexistent/", &collectMatchedId, &matchedIds);
+  scan.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  EXPECT_FALSE(scan.hasError());
+  EXPECT_TRUE(matchedIds.empty());
+}
+
+TEST(ManifestIndexPrefixScan, WorksWhenFedInSmallChunksAcrossLineBoundaries) {
+  const std::string index = buildSampleIndex();
+  std::vector<std::string> matchedIds;
+  ManifestIndexPrefixScan scan("/Kỹ năng/", &collectMatchedId, &matchedIds);
+  for (size_t i = 0; i < index.size(); ++i) {
+    scan.feed(reinterpret_cast<const uint8_t*>(index.data() + i), 1);
+  }
+  EXPECT_FALSE(scan.hasError());
+  EXPECT_EQ(matchedIds, (std::vector<std::string>{"bok_1", "bok_2"}));
+}
+
+// --- ManifestIndexIdLookup --------------------------------------------------
+
+TEST(ManifestIndexIdLookup, FindsAnEntryByStableId) {
+  const std::string index = buildSampleIndex();
+  ManifestIndexIdLookup lookup("bok_4");
+  lookup.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  EXPECT_FALSE(lookup.hasError());
+  ASSERT_TRUE(lookup.found());
+  EXPECT_EQ(lookup.record().path, "/Văn học/Chí Phèo.epub");
+}
+
+TEST(ManifestIndexIdLookup, TellsWhetherTheBookIsAlreadyDownloaded) {
+  const std::string index = buildSampleIndex();
+  ManifestIndexIdLookup lookup("bok_5");
+  lookup.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  ASSERT_TRUE(lookup.found());
+  EXPECT_TRUE(lookup.record().downloaded);
+
+  ManifestIndexIdLookup notDownloaded("bok_1");
+  notDownloaded.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  ASSERT_TRUE(notDownloaded.found());
+  EXPECT_FALSE(notDownloaded.record().downloaded);
+}
+
+TEST(ManifestIndexIdLookup, ReportsNotFoundWithoutErrorForAnUnknownId) {
+  const std::string index = buildSampleIndex();
+  ManifestIndexIdLookup lookup("bok_does_not_exist");
+  lookup.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  EXPECT_FALSE(lookup.hasError());
+  EXPECT_FALSE(lookup.found());
+}
+
+}  // namespace
