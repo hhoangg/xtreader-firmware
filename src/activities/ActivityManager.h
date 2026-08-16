@@ -105,6 +105,10 @@ class ActivityManager {
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;
+#ifdef CP_TEST_CONSOLE
+  // Test-console introspection (CMD:ACTIVITY).
+  const Activity* getCurrentActivity() const { return currentActivity.get(); }
+#endif
 
   // If immediate is true, the update will be triggered immediately.
   // Otherwise, it will be deferred until the end of the current loop iteration.

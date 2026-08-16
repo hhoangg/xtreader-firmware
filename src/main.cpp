@@ -581,6 +581,32 @@ static void delayWallClock(const unsigned long ms) {
   }
 }
 
+#ifdef CP_TEST_CONSOLE
+// Maps a CMD:PRESS / CMD:HOLD button token to the logical button it injects.
+// Only the seven physical buttons the console can actually hold are valid;
+// everything else falls through to CMDERR:unknown like any other bad command.
+static bool parseTestButtonName(const String& name, MappedInputManager::Button& out) {
+  if (name == "BACK") {
+    out = MappedInputManager::Button::Back;
+  } else if (name == "CONFIRM") {
+    out = MappedInputManager::Button::Confirm;
+  } else if (name == "LEFT") {
+    out = MappedInputManager::Button::Left;
+  } else if (name == "RIGHT") {
+    out = MappedInputManager::Button::Right;
+  } else if (name == "UP") {
+    out = MappedInputManager::Button::Up;
+  } else if (name == "DOWN") {
+    out = MappedInputManager::Button::Down;
+  } else if (name == "POWER") {
+    out = MappedInputManager::Button::Power;
+  } else {
+    return false;
+  }
+  return true;
+}
+#endif
+
 void loop() {
   static unsigned long maxLoopDuration = 0;
   const unsigned long loopStartTime = millis();
@@ -610,9 +636,86 @@ void loop() {
         const uint32_t bufferSize = display.getBufferSize();
         logSerial.printf("SCREENSHOT_START:%d\n", bufferSize);
         uint8_t* buf = display.getFrameBuffer();
+        // The global 1ms TX timeout (see setup()) exists so routine logging
+        // never blocks the loop when no host is draining it; at that
+        // timeout a single write() of the ~48KB framebuffer gives up after
+        // roughly one USB CDC buffer and silently drops the rest. Raise it
+        // only for this dump, and only long enough per chunk to let an
+        // actively-reading host keep up (USB CDC drains this in well under
+        // a millisecond in practice) -- then restore the load-bearing
+        // default no matter how the dump ends. Writing in bounded chunks
+        // (rather than one 48KB call) means a stalled host only blocks the
+        // loop for one chunk's timeout, not the whole transfer, and lets us
+        // detect a short write and stop instead of trusting the whole
+        // buffer made it out. buf already IS the framebuffer, so this
+        // writes slices of it directly -- nothing here allocates.
+#if LOG_SERIAL_HAS_TX_TIMEOUT
+        constexpr uint32_t kScreenshotTxTimeoutMs = 200;
+        constexpr uint32_t kScreenshotChunkSize = 1024;
+        logSerial.setTxTimeoutMs(kScreenshotTxTimeoutMs);
+        uint32_t sent = 0;
+        while (sent < bufferSize) {
+          const uint32_t remaining = bufferSize - sent;
+          const uint32_t chunkLen = remaining < kScreenshotChunkSize ? remaining : kScreenshotChunkSize;
+          const size_t written = logSerial.write(buf + sent, chunkLen);
+          sent += written;
+          if (written < chunkLen) break;  // host stalled/disappeared; stop rather than spin
+        }
+        logSerial.setTxTimeoutMs(1);  // restore the load-bearing default from setup()
+#else
         logSerial.write(buf, bufferSize);
+#endif
         logSerial.printf("SCREENSHOT_END\n");
-      } else {
+      }
+#ifdef CP_TEST_CONSOLE
+      else if (cmd.startsWith("PRESS ")) {
+        String name = cmd.substring(6);
+        name.trim();
+        MappedInputManager::Button button;
+        if (parseTestButtonName(name, button)) {
+          mappedInputManager.injectPress(button);
+        } else {
+          handled = false;
+        }
+      } else if (cmd.startsWith("HOLD ")) {
+        String rest = cmd.substring(5);
+        rest.trim();
+        const int sp = rest.indexOf(' ');
+        MappedInputManager::Button button;
+        unsigned long holdMs = 0;
+        if (sp > 0 && parseTestButtonName(rest.substring(0, sp), button)) {
+          String msStr = rest.substring(sp + 1);
+          msStr.trim();
+          holdMs = static_cast<unsigned long>(msStr.toInt());
+        }
+        if (holdMs > 0) {
+          mappedInputManager.injectPress(button, holdMs);
+        } else {
+          handled = false;
+        }
+      } else if (cmd == "HEAP") {
+        // Machine-readable, matches the [MEM] log stats above but on demand.
+        logSerial.printf("[TEST] {\"heap\":%u,\"maxAlloc\":%u,\"minFreeHeap\":%u}\n",
+                         static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()),
+                         static_cast<unsigned>(ESP.getMinFreeHeap()));
+      } else if (cmd == "FBHASH") {
+        // FNV-1a 32-bit over the raw framebuffer: cheap enough to run every
+        // frame, lets the harness assert "changed" / "matches" without
+        // pulling the full ~48 KB buffer over serial like CMD:SCREENSHOT does.
+        const uint32_t bufferSize = display.getBufferSize();
+        const uint8_t* buf = display.getFrameBuffer();
+        uint32_t hash = 2166136261u;
+        for (uint32_t i = 0; i < bufferSize; i++) {
+          hash ^= buf[i];
+          hash *= 16777619u;
+        }
+        logSerial.printf("[TEST] {\"fbhash\":\"%08x\",\"size\":%u}\n", hash, bufferSize);
+      } else if (cmd == "ACTIVITY") {
+        const Activity* activity = activityManager.getCurrentActivity();
+        logSerial.printf("[TEST] {\"activity\":\"%s\"}\n", activity ? activity->getName().c_str() : "");
+      }
+#endif
+      else {
         handled = false;
       }
       // Raw print, not LOG_*: debugging_monitor.py keys on this ack to report

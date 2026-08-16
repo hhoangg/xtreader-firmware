@@ -297,7 +297,23 @@ bool MappedInputManager::wasPowerConfirmClick() const {
 }
 #endif
 
+#ifdef CP_TEST_CONSOLE
+void MappedInputManager::injectPress(const Button button, const unsigned long holdMs) {
+  injectedButton = button;
+  injectedReleaseAt = millis() + holdMs;
+  injectedHeldMs = holdMs;
+  injectedPressPending = true;
+  injectedReleasePending = true;
+}
+#endif
+
 bool MappedInputManager::wasPressed(const Button button) const {
+#ifdef CP_TEST_CONSOLE
+  if (injectedPressPending && injectedButton == button) {
+    injectedPressPending = false;
+    return true;
+  }
+#endif
   if (button == Button::Back && wasBackGesture()) return true;
 #if FREEINK_CAP_TOUCH
   if (button == Button::Confirm && wasPowerConfirmClick()) return true;
@@ -306,6 +322,15 @@ bool MappedInputManager::wasPressed(const Button button) const {
 }
 
 bool MappedInputManager::wasReleased(const Button button) const {
+#ifdef CP_TEST_CONSOLE
+  // Fires once the injected hold's duration has elapsed (immediately, for a
+  // holdMs = 0 tap), matching HalGPIO's edge-on-release semantics.
+  if (injectedReleasePending && injectedButton == button && static_cast<long>(millis() - injectedReleaseAt) >= 0) {
+    injectedReleasePending = false;
+    injectedHeldOverrideValid = true;
+    return true;
+  }
+#endif
   if (button == Button::Back && wasBackGesture()) return true;
 #if FREEINK_CAP_TOUCH
   if (button == Button::Confirm && wasPowerConfirmClick()) return true;
@@ -313,13 +338,24 @@ bool MappedInputManager::wasReleased(const Button button) const {
   return mapButton(button, &HalGPIO::wasReleased);
 }
 
-bool MappedInputManager::isPressed(const Button button) const { return mapButton(button, &HalGPIO::isPressed); }
+bool MappedInputManager::isPressed(const Button button) const {
+#ifdef CP_TEST_CONSOLE
+  if (injectedReleasePending && injectedButton == button) return true;
+#endif
+  return mapButton(button, &HalGPIO::isPressed);
+}
 
 bool MappedInputManager::wasAnyPressed() const { return gpio.wasAnyPressed(); }
 
 bool MappedInputManager::wasAnyReleased() const { return gpio.wasAnyReleased(); }
 
 unsigned long MappedInputManager::getHeldTime() const {
+#ifdef CP_TEST_CONSOLE
+  if (injectedHeldOverrideValid) {
+    injectedHeldOverrideValid = false;
+    return injectedHeldMs;
+  }
+#endif
   if (!gpio.wasAnyPressed() && !gpio.wasAnyReleased() && touchHeldOverrideValid &&
       millis() - touchHeldOverrideAt <= TOUCH_HELD_OVERRIDE_WINDOW_MS) {
     return touchHeldOverrideMs;

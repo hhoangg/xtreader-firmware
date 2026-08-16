@@ -48,6 +48,20 @@ class MappedInputManager {
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
   bool isPressed(Button button) const;
+#ifdef CP_TEST_CONSOLE
+  // Test-console synthetic input injection, consulted by wasPressed() (and,
+  // for holds, isPressed()/wasReleased()/getHeldTime()) before falling
+  // through to the real GPIO path. Queues at most one pending button action;
+  // enqueuing overwrites any not-yet-consumed one, same as a single physical
+  // button never queuing two presses. holdMs = 0 models an instantaneous tap
+  // (the release edge fires on the very next consult); holdMs > 0 keeps
+  // isPressed() true for that long before the release edge fires, so
+  // long-press flows gated on wasReleased()+getHeldTime() (see
+  // FileBrowserActivity's delete-on-hold) see a real hold. Either way the
+  // press edge itself is consumed exactly once by wasPressed(), just like a
+  // real button, so a single CMD:PRESS cannot drive two frames.
+  void injectPress(Button button, unsigned long holdMs = 0);
+#endif
   bool hasTouch() const;
   bool wasScreenTapped(int& x, int& y) const;
   bool wasScreenTouchDown(int& x, int& y) const;
@@ -138,5 +152,13 @@ class MappedInputManager {
   mutable unsigned long touchHeldOverrideAt = 0;
 #if FREEINK_CAP_TOUCH
   bool powerConfirmClickFrame = false;
+#endif
+#ifdef CP_TEST_CONSOLE
+  mutable bool injectedPressPending = false;
+  mutable bool injectedReleasePending = false;
+  mutable bool injectedHeldOverrideValid = false;
+  mutable Button injectedButton = Button::Back;
+  mutable unsigned long injectedReleaseAt = 0;
+  mutable unsigned long injectedHeldMs = 0;
 #endif
 };

@@ -53,6 +53,11 @@ class Activity {
   virtual bool isHomeActivity() const { return false; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
+#ifdef CP_TEST_CONSOLE
+  // Test-console introspection (CMD:ACTIVITY): the cheapest possible
+  // assertion that navigation landed where it should.
+  const std::string& getName() const { return name; }
+#endif
 
   // Start a new activity without destroying the current one
   // Note: requestUpdate() will be invoked automatically once resultHandler finishes
