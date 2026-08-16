@@ -713,6 +713,32 @@ void loop() {
       } else if (cmd == "ACTIVITY") {
         const Activity* activity = activityManager.getCurrentActivity();
         logSerial.printf("[TEST] {\"activity\":\"%s\"}\n", activity ? activity->getName().c_str() : "");
+      } else if (cmd == "SLEEP") {
+        // Last known-good marker for the host to compare against once the device
+        // wakes back up (or to inspect if it never does). Printed before the ack,
+        // same ordering as HEAP/FBHASH/ACTIVITY above, so a host reading for the
+        // ack via the usual [TEST]-lines-then-CMDACK protocol still captures it.
+        const Activity* activity = activityManager.getCurrentActivity();
+        logSerial.printf("[TEST] {\"activity\":\"%s\",\"heap\":%u}\n", activity ? activity->getName().c_str() : "",
+                         static_cast<unsigned>(ESP.getFreeHeap()));
+        // enterDeepSleep() cuts power via powerManager.startDeepSleep() and never
+        // returns, so the USB port vanishes with it. Ack now: sending CMDACK after
+        // the call (like every other command below) would just be lost.
+        logSerial.printf("CMDACK:%s\n", cmd.c_str());
+        // Force the ack out before anything can tear the link down: the global TX
+        // timeout is 1 ms, and startDeepSleep() calls logSerial.end(). In practice
+        // enterDeepSleep() spends hundreds of ms saving state and repainting first,
+        // but a silently dropped ack would look identical to a device that hung.
+        logSerial.flush();
+        // fromTimeout=false: a console-triggered sleep is a manual trigger, the
+        // same as the power-button hold path below (`enterDeepSleep()`, no arg),
+        // not the inactivity-timeout path (`enterDeepSleep(true)`). Passing false
+        // keeps SETTINGS.quickResumeSleepScreen's "after timeout" branch honest --
+        // it must not fire just because this was sent over serial instead of a
+        // real held button.
+        enterDeepSleep();
+        // enterDeepSleep() calls esp_deep_sleep_start() and does not return.
+        return;
       }
 #endif
       else {
