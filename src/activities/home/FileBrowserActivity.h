@@ -46,11 +46,12 @@ class FileBrowserActivity final : public UiListActivity {
   // (cursor move, tap flash, ...), which meant a 500-file directory allocated
   // 500 strings per repaint instead of once per directory load.
   std::vector<std::string> rowNames;
-  std::vector<std::string> rowExtensions;
-  // Placeholder rows only: holds the "not downloaded" marker text, rendered as the row's
-  // ListItem::subtitle instead of rowExtensions' ListItem::value (see rebuildRowItems()). Empty
-  // for every non-placeholder row, matching rowExtensions' "empty means unset" convention.
-  std::vector<std::string> rowSubtitles;
+  // The row's ListItem::value: a normal row's extension ("EPUB"), or a placeholder row's download
+  // status ("Chưa tải"/"Đang tải" -- see rebuildRowItems()). One column, one meaning either way, so
+  // a reader scanning the list always finds the same answer ("is this on the device?") in the same
+  // place -- an empty value slot used to be the only signal a placeholder row gave, which read as
+  // "no data yet" rather than "not downloaded" at a glance.
+  std::vector<std::string> rowValues;
   std::vector<freeink::ui::ListItem> rowItems;
   // getFileName()'s "[folder]" bracket formatting depends on the active
   // theme's showsFileIcons(); tracked so a theme change while this activity is

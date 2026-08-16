@@ -145,15 +145,14 @@ void FileBrowserActivity::sortMergedFiles() {
   fileRemoteId = std::move(sortedRemoteId);
 }
 
-// Derives rowNames/rowExtensions/rowItems from `files`. Called whenever
+// Derives rowNames/rowValues/rowItems from `files`. Called whenever
 // `files` changes (end of loadFiles()) so buildScreen() can reuse the cached
 // rows on every repaint instead of re-deriving a name/extension string (and a
 // ListItem) per file each time it's called.
 void FileBrowserActivity::rebuildRowItems() {
   rowsUseFileIcons = UITheme::getInstance().getTheme().showsFileIcons();
   rowNames.resize(files.size());
-  rowExtensions.resize(files.size());
-  rowSubtitles.resize(files.size());
+  rowValues.resize(files.size());
   rowItems.clear();
   rowItems.reserve(files.size());
   // One snapshot for the whole rebuild: it copies a fixed array of QueueItem (each holding
@@ -161,24 +160,29 @@ void FileBrowserActivity::rebuildRowItems() {
   const download_queue::Snapshot queueSnap = download_queue::snapshot();
   for (size_t i = 0; i < files.size(); i++) {
     rowNames[i] = getFileName(files[i]);
-    // A placeholder row (fileRemoteId[i] non-empty) swaps the value slot's extension for a
-    // subtitle line: unmistakably not a normal row even at a glance, and distinct from the
-    // extension tag a real local file already shows in the same slot -- see FolderMerge's class
-    // comment for why fileRemoteId is the placeholder signal.
+    // A placeholder row (fileRemoteId[i] non-empty) shows a download status in the same value slot
+    // a normal row uses for its extension, instead of a subtitle line: an empty value slot was the
+    // only thing that told the two apart, and an absence is the weakest possible signal on a row
+    // that otherwise looks identical (same icon, same font, same two-line title wrap) -- a reader
+    // scanning the list could not tell which books were actually on the device. One column now
+    // always answers "is this on the device?", the same way, in the same place. See FolderMerge's
+    // class comment for why fileRemoteId is the placeholder signal.
     const bool placeholder = i < fileRemoteId.size() && !fileRemoteId[i].empty();
-    rowExtensions[i] = placeholder ? std::string() : getFileExtension(files[i]);
     // A queued or in-flight book keeps its placeholder row but says so, since the row is the
     // only place the reader looks after picking it -- the download itself runs on a background
-    // task with nothing else on screen to report it.
+    // task with nothing else on screen to report it. STR_BOOK_ON_SERVER/STR_BOOK_DOWNLOADING are
+    // dedicated to this column, not STR_NOT_DOWNLOADED_YET/STR_DOWNLOADING: those are shared with
+    // screens that have a full line to spare (FontDownloadActivity, OpdsBookBrowserActivity) and
+    // must stay at their natural length, while this value slot is narrow and sits beside a
+    // wrapping title.
     // tr() pastes StrId:: onto its argument, so the choice has to happen outside the macro.
-    const char* placeholderNote =
-        isQueued(queueSnap, fileRemoteId[i]) ? tr(STR_DOWNLOADING) : tr(STR_NOT_DOWNLOADED_YET);
-    rowSubtitles[i] = placeholder ? std::string(placeholderNote) : std::string();
+    rowValues[i] = placeholder
+                       ? (isQueued(queueSnap, fileRemoteId[i]) ? tr(STR_BOOK_DOWNLOADING) : tr(STR_BOOK_ON_SERVER))
+                       : getFileExtension(files[i]);
 
     fui::ListItem item;
     item.label = rowNames[i].c_str();
-    if (!rowExtensions[i].empty()) item.value = rowExtensions[i].c_str();
-    if (!rowSubtitles[i].empty()) item.subtitle = rowSubtitles[i].c_str();
+    if (!rowValues[i].empty()) item.value = rowValues[i].c_str();
     item.icon = listIconFor(UITheme::getFileIcon(files[i]));
     item.actionValue = static_cast<int16_t>(i);
     rowItems.push_back(item);
@@ -217,8 +221,7 @@ void FileBrowserActivity::onExit() {
   files.clear();
   fileRemoteId.clear();
   rowNames.clear();
-  rowExtensions.clear();
-  rowSubtitles.clear();
+  rowValues.clear();
   rowItems.clear();
   fileNameBuffer.reset();
 }
@@ -486,7 +489,7 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
   } else {
     // --- SHORT PRESS ACTION: OPEN/NAVIGATE ---
     // buildScreen() runs on the render task and reads basepath plus the
-    // ListItem label/value pointers into rowNames/rowExtensions that
+    // ListItem label/value pointers into rowNames/rowValues that
     // rebuildRowItems() frees; mutate only under the render lock.
     RenderLock lock(*this);
     if (basepath.back() != '/') basepath += "/";
@@ -634,7 +637,7 @@ void FileBrowserActivity::buildScreen(UiScreen& screen) {
     return;
   }
 
-  // rowNames/rowExtensions/rowItems are built once per loadFiles() call (see
+  // rowNames/rowValues/rowItems are built once per loadFiles() call (see
   // rebuildRowItems()) and reused here. getFileName()'s folder-bracket format
   // depends on the theme, so a theme change picked up while this activity was
   // paused underneath another screen invalidates the cache before it's read.
