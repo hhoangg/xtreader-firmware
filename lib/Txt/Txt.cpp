@@ -1,14 +1,18 @@
 #include "Txt.h"
 
+#include <BookCacheDir.h>
 #include <FsHelpers.h>
 #include <JpegToBmpConverter.h>
 #include <Logging.h>
 
 Txt::Txt(std::string path, std::string cacheBasePath)
-    : filepath(std::move(path)), cacheBasePath(std::move(cacheBasePath)) {
-  // Generate cache path from file path hash
-  const size_t hash = std::hash<std::string>{}(filepath);
-  cachePath = this->cacheBasePath + "/txt_" + std::to_string(hash);
+    : filepath(std::move(path)), cacheBasePath(std::move(cacheBasePath)) {}
+
+void Txt::ensureCachePath() const {
+  if (!cachePath.empty()) {
+    return;
+  }
+  cachePath = FsHelpers::resolveBookCacheDir(cacheBasePath, "txt_", filepath);
 }
 
 bool Txt::load() {
@@ -49,6 +53,7 @@ std::string Txt::getTitle() const {
 }
 
 void Txt::setupCacheDir() const {
+  ensureCachePath();
   if (!Storage.exists(cacheBasePath.c_str())) {
     Storage.mkdir(cacheBasePath.c_str());
   }
@@ -95,7 +100,7 @@ std::string Txt::findCoverImage() const {
   return "";
 }
 
-std::string Txt::getCoverBmpPath() const { return cachePath + "/cover.bmp"; }
+std::string Txt::getCoverBmpPath() const { return getCachePath() + "/cover.bmp"; }
 
 bool Txt::generateCoverBmp() const {
   // Already generated, return true
@@ -156,6 +161,7 @@ bool Txt::generateCoverBmp() const {
 }
 
 bool Txt::clearCache() const {
+  ensureCachePath();
   if (!Storage.exists(cachePath.c_str())) {
     LOG_DBG("TXT", "Cache does not exist, no action needed");
     return true;

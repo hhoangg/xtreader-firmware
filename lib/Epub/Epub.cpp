@@ -1,5 +1,6 @@
 #include "Epub.h"
 
+#include <BookCacheDir.h>
 #include <FsHelpers.h>
 #include <HalStorage.h>
 #include <JpegToBmpConverter.h>
@@ -12,6 +13,13 @@
 #include "Epub/parsers/ContentOpfParser.h"
 #include "Epub/parsers/TocNavParser.h"
 #include "Epub/parsers/TocNcxParser.h"
+
+void Epub::ensureCachePath() const {
+  if (!cachePath.empty()) {
+    return;
+  }
+  cachePath = FsHelpers::resolveBookCacheDir(cacheDir, "epub_", filepath);
+}
 
 bool Epub::findContentOpfFile(std::string* contentOpfFile) const {
   const auto containerPath = "META-INF/container.xml";
@@ -356,6 +364,7 @@ void Epub::parseCssFiles() const {
 // load in the meta data for the epub file
 bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
   LOG_DBG("EBP", "Loading ePub: %s", filepath.c_str());
+  ensureCachePath();
 
   // Initialize spine/TOC cache
   bookMetadataCache.reset(new BookMetadataCache(cachePath));
@@ -502,6 +511,7 @@ bool Epub::load(const bool buildIfMissing, const bool skipLoadingCss) {
 }
 
 bool Epub::clearCache() const {
+  ensureCachePath();
   if (!Storage.exists(cachePath.c_str())) {
     LOG_DBG("EPB", "Cache does not exist, no action needed");
     return true;
@@ -517,6 +527,7 @@ bool Epub::clearCache() const {
 }
 
 void Epub::setupCacheDir() const {
+  ensureCachePath();
   if (Storage.exists(cachePath.c_str())) {
     return;
   }
@@ -524,7 +535,10 @@ void Epub::setupCacheDir() const {
   Storage.mkdir(cachePath.c_str());
 }
 
-const std::string& Epub::getCachePath() const { return cachePath; }
+const std::string& Epub::getCachePath() const {
+  ensureCachePath();
+  return cachePath;
+}
 
 const std::string& Epub::getPath() const { return filepath; }
 
@@ -557,7 +571,7 @@ const std::string& Epub::getLanguage() const {
 
 std::string Epub::getCoverBmpPath(bool cropped) const {
   const auto coverFileName = std::string("cover") + (cropped ? "_crop" : "");
-  return cachePath + "/" + coverFileName + ".bmp";
+  return getCachePath() + "/" + coverFileName + ".bmp";
 }
 
 bool Epub::generateCoverBmp(bool cropped) const {
@@ -649,8 +663,10 @@ bool Epub::generateCoverBmp(bool cropped) const {
   return false;
 }
 
-std::string Epub::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
-std::string Epub::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
+std::string Epub::getThumbBmpPath() const { return getCachePath() + "/thumb_[HEIGHT].bmp"; }
+std::string Epub::getThumbBmpPath(int height) const {
+  return getCachePath() + "/thumb_" + std::to_string(height) + ".bmp";
+}
 
 bool Epub::generateThumbBmp(int height) const {
   // Already generated, return true

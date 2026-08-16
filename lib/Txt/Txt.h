@@ -8,16 +8,24 @@
 class Txt {
   std::string filepath;
   std::string cacheBasePath;
-  std::string cachePath;
+  // Cache key based on file content, computed lazily (see ensureCachePath()) since it requires
+  // opening and reading the file, which can fail.
+  mutable std::string cachePath;
   bool loaded = false;
   size_t fileSize = 0;
+
+  // Computes cachePath on first use (memoised thereafter). See getCachePath().
+  void ensureCachePath() const;
 
  public:
   explicit Txt(std::string path, std::string cacheBasePath);
 
   bool load();
   [[nodiscard]] const std::string& getPath() const { return filepath; }
-  [[nodiscard]] const std::string& getCachePath() const { return cachePath; }
+  [[nodiscard]] const std::string& getCachePath() const {
+    ensureCachePath();
+    return cachePath;
+  }
   [[nodiscard]] std::string getTitle() const;
   [[nodiscard]] size_t getFileSize() const { return fileSize; }
 

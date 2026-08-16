@@ -6,7 +6,9 @@
  *
  * KOReader identifies documents using a partial MD5 hash of the file content.
  * The algorithm reads 1024 bytes at specific offsets and computes the MD5 hash
- * of the concatenated data.
+ * of the concatenated data. See FsHelpers::partialContentHashFromReader() (lib/FsHelpers) for
+ * the shared implementation - it is also used to key CrossPoint's own per-book cache
+ * directories by content instead of by path.
  *
  * Offsets are calculated as: 1024 << (2*i) for i = -1 to 10
  * Producing: 256, 1024, 4096, 16384, 65536, 262144, 1048576, 4194304,
@@ -32,14 +34,4 @@ class KOReaderDocumentId {
    * @return 32-character lowercase hex MD5 of the filename
    */
   static std::string calculateFromFilename(const std::string& filePath);
-
- private:
-  // Size of each chunk to read at each offset
-  static constexpr size_t CHUNK_SIZE = 1024;
-
-  // Number of offsets to try (i = -1 to 10, so 12 offsets)
-  static constexpr int OFFSET_COUNT = 12;
-
-  // Calculate offset for index i: 1024 << (2*i)
-  static size_t getOffset(int i);
 };

@@ -22,15 +22,19 @@
  */
 class Xtc {
   std::string filepath;
-  std::string cachePath;
+  std::string cacheDir;
+  // Cache key based on file content, computed lazily (see ensureCachePath()) since it requires
+  // opening and reading the file, which can fail.
+  mutable std::string cachePath;
   std::unique_ptr<xtc::XtcParser> parser;
   bool loaded;
 
+  // Computes cachePath on first use (memoised thereafter). See getCachePath().
+  void ensureCachePath() const;
+
  public:
-  explicit Xtc(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)), loaded(false) {
-    // Create cache key based on filepath (same as Epub)
-    cachePath = cacheDir + "/xtc_" + std::to_string(std::hash<std::string>{}(this->filepath));
-  }
+  explicit Xtc(std::string filepath, std::string cacheDir)
+      : filepath(std::move(filepath)), cacheDir(std::move(cacheDir)), loaded(false) {}
   ~Xtc() = default;
 
   /**
@@ -51,7 +55,10 @@ class Xtc {
   void setupCacheDir() const;
 
   // Path accessors
-  const std::string& getCachePath() const { return cachePath; }
+  const std::string& getCachePath() const {
+    ensureCachePath();
+    return cachePath;
+  }
   const std::string& getPath() const { return filepath; }
 
   // Metadata

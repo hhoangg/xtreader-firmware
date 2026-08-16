@@ -8,6 +8,7 @@
 #include "Xtc.h"
 
 #include <Bitmap.h>
+#include <BookCacheDir.h>
 #include <HalStorage.h>
 #include <Logging.h>
 #include <freertos/FreeRTOS.h>
@@ -20,6 +21,13 @@ void yieldDuringThumbnail(uint8_t& rowsSinceYield) {
   vTaskDelay(1);
 }
 }  // namespace
+
+void Xtc::ensureCachePath() const {
+  if (!cachePath.empty()) {
+    return;
+  }
+  cachePath = FsHelpers::resolveBookCacheDir(cacheDir, "xtc_", filepath);
+}
 
 bool Xtc::load() {
   LOG_DBG("XTC", "Loading XTC: %s", filepath.c_str());
@@ -41,6 +49,7 @@ bool Xtc::load() {
 }
 
 bool Xtc::clearCache() const {
+  ensureCachePath();
   if (!Storage.exists(cachePath.c_str())) {
     LOG_DBG("XTC", "Cache does not exist, no action needed");
     return true;
@@ -56,6 +65,7 @@ bool Xtc::clearCache() const {
 }
 
 void Xtc::setupCacheDir() const {
+  ensureCachePath();
   if (Storage.exists(cachePath.c_str())) {
     return;
   }
@@ -121,7 +131,7 @@ const std::vector<xtc::ChapterInfo>& Xtc::getChapters() {
   return parser->getChapters();
 }
 
-std::string Xtc::getCoverBmpPath() const { return cachePath + "/cover.bmp"; }
+std::string Xtc::getCoverBmpPath() const { return getCachePath() + "/cover.bmp"; }
 
 bool Xtc::generateCoverBmp() const {
   // Already generated
@@ -270,8 +280,10 @@ bool Xtc::generateCoverBmp() const {
   return true;
 }
 
-std::string Xtc::getThumbBmpPath() const { return cachePath + "/thumb_[HEIGHT].bmp"; }
-std::string Xtc::getThumbBmpPath(int height) const { return cachePath + "/thumb_" + std::to_string(height) + ".bmp"; }
+std::string Xtc::getThumbBmpPath() const { return getCachePath() + "/thumb_[HEIGHT].bmp"; }
+std::string Xtc::getThumbBmpPath(int height) const {
+  return getCachePath() + "/thumb_" + std::to_string(height) + ".bmp";
+}
 
 bool Xtc::generateThumbBmp(int height) const {
   // Already generated

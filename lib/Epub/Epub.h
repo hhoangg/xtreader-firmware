@@ -21,8 +21,11 @@ class Epub {
   std::string filepath;
   // the base path for items in the EPUB file
   std::string contentBasePath;
-  // Uniq cache key based on filepath
-  std::string cachePath;
+  // directory under which per-book cache directories live
+  std::string cacheDir;
+  // Cache key based on file content, computed lazily (see ensureCachePath()) since it requires
+  // opening and reading the file, which can fail.
+  mutable std::string cachePath;
   // Spine and TOC cache
   std::unique_ptr<BookMetadataCache> bookMetadataCache;
   // CSS parser for styling
@@ -36,12 +39,12 @@ class Epub {
   bool parseTocNavFile() const;
   void discoverCssFilesFromZip();
   void parseCssFiles() const;
+  // Computes cachePath on first use (memoised thereafter). See getCachePath().
+  void ensureCachePath() const;
 
  public:
-  explicit Epub(std::string filepath, const std::string& cacheDir) : filepath(std::move(filepath)) {
-    // create a cache key based on the filepath
-    cachePath = cacheDir + "/epub_" + std::to_string(std::hash<std::string>{}(this->filepath));
-  }
+  explicit Epub(std::string filepath, std::string cacheDir)
+      : filepath(std::move(filepath)), cacheDir(std::move(cacheDir)) {}
   ~Epub() = default;
   std::string& getBasePath() { return contentBasePath; }
   bool load(bool buildIfMissing = true, bool skipLoadingCss = false);
