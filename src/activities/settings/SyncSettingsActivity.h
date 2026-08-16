@@ -14,7 +14,16 @@ class SyncSettingsActivity final : public UiListActivity {
  public:
   explicit SyncSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput);
 
-  static constexpr int MENU_ITEMS = 3;
+  // Two rows added by the book-download-engine task, minimal on purpose --
+  // see the task's report for why they live here and not in a dedicated
+  // screen:
+  //  - Request Books: POST /feedback/request-books, the one-button "the
+  //    library has run dry" signal (docs/API.md's "Feedback and telemetry").
+  //  - Download Queue: read-only count of what download_queue.h currently
+  //    has queued/downloading, doubling as the "get out" cancel action
+  //    (download_queue::cancelAll()) -- the same single-row,
+  //    state-dependent-label pattern ROW_PAIR_ACTION already uses below.
+  static constexpr int MENU_ITEMS = 5;
 #ifdef CP_TEST_CONSOLE
   bool getSelectedRowInfo(std::string& outLabel, int& outIndex, int& outCount) const override;
 #endif
@@ -36,4 +45,12 @@ class SyncSettingsActivity final : public UiListActivity {
 
   void launchPairing();
   void unlinkDevice();
+
+  // Result of the last Request Books tap, shown as the row's value until the
+  // next tap or the next time this screen is left and re-entered -- purely
+  // transient UI feedback, not persisted anywhere.
+  std::string requestBooksStatus_;
+  void requestBooksTapped();
+  void doRequestBooks();
+  void toggleQueueCancel();
 };

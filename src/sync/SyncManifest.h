@@ -46,9 +46,9 @@ struct SyncResult {
   uint32_t entriesWritten = 0;
   uint32_t totalCount = 0;  // the server's totalCount, as of the last trailer seen
 
-  HeapSample beforeRequest;    // before Wi-Fi/TLS/anything -- the sync's starting point
-  HeapSample afterHandshake;   // inside the first page's first response-body callback (TLS + headers done)
-  HeapSample afterLastPage;    // after the whole sync (all pages, index written and renamed into place)
+  HeapSample beforeRequest;   // before Wi-Fi/TLS/anything -- the sync's starting point
+  HeapSample afterHandshake;  // inside the first page's first response-body callback (TLS + headers done)
+  HeapSample afterLastPage;   // after the whole sync (all pages, index written and renamed into place)
 };
 
 // Fetches the full manifest (no `since` -- always a full listing, never a
@@ -81,10 +81,17 @@ bool listByPrefix(const std::string& folderPrefix, ManifestIndexPrefixScan::Matc
 bool findById(const std::string& id, ManifestIndexRecord& out);
 
 // Convenience over findById(): true only if `id` exists in the index and
-// its `downloaded` flag is set. Always false today -- nothing sets that
-// flag yet, since this task doesn't download books -- but the query is
-// wired up now so a future downloader only has to flip the flag, not add
-// a new lookup path.
+// its `downloaded` flag is set.
 bool isDownloaded(const std::string& id);
+
+// Flips `id`'s `downloaded` column to true, in place: a single-byte seek+
+// write (see ManifestIndexDownloadedFlagLocator in lib/SyncManifest), not a
+// rewrite of the index -- the column exists in the format for exactly this
+// (see ManifestIndexRecord's comment). Called by src/sync/BookDownloader.cpp
+// once a book's bytes are safely renamed into place on SD. Returns false if
+// `id` is not in the index, the index has never been synced, or the write
+// failed; the caller treats that as "the book downloaded fine, but the
+// index couldn't be updated" (logged, not fatal to the download itself).
+bool markDownloaded(const std::string& id);
 
 }  // namespace sync_manifest

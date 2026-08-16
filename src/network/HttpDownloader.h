@@ -53,9 +53,16 @@ class HttpDownloader {
    * streaming fetchUrl() overload above instead. outStatus, if non-null,
    * receives the HTTP status code; left untouched on a connect/TLS/DNS
    * failure that never got a response at all.
+   *
+   * bearerToken, if non-empty, sends "Authorization: Bearer <token>" -- the
+   * crosspoint-sync telemetry/feedback routes (/devices/heartbeat,
+   * /feedback/request-books, /events/*) are device-authenticated the same
+   * way GET /library/manifest is (see the streaming fetchUrl() overload's
+   * comment). Device pairing's own POSTs (/device/code, /device/token) take
+   * no auth at all, so they simply omit this argument.
    */
   static bool postJson(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                       int* outStatus = nullptr);
+                       int* outStatus = nullptr, const std::string& bearerToken = "");
 
   /**
    * Download a file to the SD card with optional credentials.

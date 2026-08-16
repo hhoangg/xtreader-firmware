@@ -1,5 +1,6 @@
 #include "FileBrowserActivity.h"
 
+#include <FileBrowserMerge.h>
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
@@ -14,6 +15,8 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
 #include "fontIds.h"
+#include "sync/DownloadQueue.h"
+#include "sync/SyncManifest.h"
 #include "util/BookCacheUtils.h"
 
 namespace fui = freeink::ui;
@@ -21,6 +24,14 @@ namespace fui = freeink::ui;
 namespace {
 constexpr unsigned long GO_HOME_MS = 1000;
 constexpr size_t NAME_BUFFER_SIZE = 500;
+
+// Bridges sync_manifest::listByPrefix()'s plain function-pointer callback (see CLAUDE.md's
+// "Template and std::function Bloat" -- no std::function here either) to a
+// file_browser_merge::FolderMerge instance built on FileBrowserActivity::loadFiles()'s stack.
+bool feedRemoteRecordToMerge(void* ctx, const ManifestIndexRecord& record) {
+  static_cast<file_browser_merge::FolderMerge*>(ctx)->addRemoteRecord(record);
+  return true;  // never stop early -- every record under this folder matters
+}
 }  // namespace
 
 std::string getFileName(std::string filename);
@@ -34,6 +45,7 @@ FileBrowserActivity::FileBrowserActivity(GfxRenderer& renderer, MappedInputManag
 
 void FileBrowserActivity::loadFiles() {
   files.clear();
+  fileRemoteId.clear();
 
   auto root = Storage.open(basepath.c_str());
   if (!root || !root.isDirectory()) {
@@ -75,8 +87,57 @@ void FileBrowserActivity::loadFiles() {
     }
   }
   root.close();
-  FsHelpers::sortFileList(files);
+
+  fileRemoteId.assign(files.size(), std::string());  // local entries carry no remote id
+  if (mode == Mode::Books) mergeRemoteEntries();
+  sortMergedFiles();
   rebuildRowItems();
+}
+
+void FileBrowserActivity::mergeRemoteEntries() {
+  std::string prefix = basepath;
+  if (prefix.empty() || prefix.back() != '/') prefix += "/";
+
+  file_browser_merge::FolderMerge merge(prefix, files, SETTINGS.showHiddenFiles);
+  if (!sync_manifest::listByPrefix(prefix, &feedRemoteRecordToMerge, &merge)) {
+    LOG_ERR("FileBrowser", "Remote index scan failed for %s", prefix.c_str());
+    return;  // fall back to the local-only listing already in files/fileRemoteId
+  }
+
+  auto merged = merge.takeEntries();
+  files.assign(merged.size(), std::string());
+  fileRemoteId.assign(merged.size(), std::string());
+  for (size_t i = 0; i < merged.size(); i++) {
+    files[i] = std::move(merged[i].name);
+    fileRemoteId[i] = std::move(merged[i].remoteId);
+  }
+}
+
+void FileBrowserActivity::sortMergedFiles() {
+  // Same ordering as FsHelpers::sortFileList (directories first, then naturalLess), reimplemented
+  // here only far enough to sort fileRemoteId in lockstep -- sortFileList itself only takes a
+  // vector<string> and would desync the two. Always used, even when mergeRemoteEntries() added
+  // nothing, so a plain local listing takes the exact same path (and produces byte-identical
+  // ordering) as before this feature existed.
+  std::vector<size_t> order(files.size());
+  for (size_t i = 0; i < order.size(); i++) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [this](const size_t a, const size_t b) {
+    const bool isDirA = !files[a].empty() && files[a].back() == '/';
+    const bool isDirB = !files[b].empty() && files[b].back() == '/';
+    if (isDirA != isDirB) return isDirA;
+    return FsHelpers::naturalLess(files[a], files[b]);
+  });
+
+  std::vector<std::string> sortedFiles;
+  std::vector<std::string> sortedRemoteId;
+  sortedFiles.reserve(files.size());
+  sortedRemoteId.reserve(files.size());
+  for (const size_t i : order) {
+    sortedFiles.push_back(std::move(files[i]));
+    sortedRemoteId.push_back(std::move(fileRemoteId[i]));
+  }
+  files = std::move(sortedFiles);
+  fileRemoteId = std::move(sortedRemoteId);
 }
 
 // Derives rowNames/rowExtensions/rowItems from `files`. Called whenever
@@ -87,14 +148,32 @@ void FileBrowserActivity::rebuildRowItems() {
   rowsUseFileIcons = UITheme::getInstance().getTheme().showsFileIcons();
   rowNames.resize(files.size());
   rowExtensions.resize(files.size());
+  rowSubtitles.resize(files.size());
   rowItems.clear();
   rowItems.reserve(files.size());
+  // One snapshot for the whole rebuild: it copies a fixed array of QueueItem (each holding
+  // std::strings) under the queue mutex, so taking it per row would allocate on every row.
+  const download_queue::Snapshot queueSnap = download_queue::snapshot();
   for (size_t i = 0; i < files.size(); i++) {
     rowNames[i] = getFileName(files[i]);
-    rowExtensions[i] = getFileExtension(files[i]);
+    // A placeholder row (fileRemoteId[i] non-empty) swaps the value slot's extension for a
+    // subtitle line: unmistakably not a normal row even at a glance, and distinct from the
+    // extension tag a real local file already shows in the same slot -- see FolderMerge's class
+    // comment for why fileRemoteId is the placeholder signal.
+    const bool placeholder = i < fileRemoteId.size() && !fileRemoteId[i].empty();
+    rowExtensions[i] = placeholder ? std::string() : getFileExtension(files[i]);
+    // A queued or in-flight book keeps its placeholder row but says so, since the row is the
+    // only place the reader looks after picking it -- the download itself runs on a background
+    // task with nothing else on screen to report it.
+    // tr() pastes StrId:: onto its argument, so the choice has to happen outside the macro.
+    const char* placeholderNote =
+        isQueued(queueSnap, fileRemoteId[i]) ? tr(STR_DOWNLOADING) : tr(STR_NOT_DOWNLOADED_YET);
+    rowSubtitles[i] = placeholder ? std::string(placeholderNote) : std::string();
+
     fui::ListItem item;
     item.label = rowNames[i].c_str();
     if (!rowExtensions[i].empty()) item.value = rowExtensions[i].c_str();
+    if (!rowSubtitles[i].empty()) item.subtitle = rowSubtitles[i].c_str();
     item.icon = listIconFor(UITheme::getFileIcon(files[i]));
     item.actionValue = static_cast<int16_t>(i);
     rowItems.push_back(item);
@@ -131,8 +210,10 @@ void FileBrowserActivity::onEnter() {
 void FileBrowserActivity::onExit() {
   Activity::onExit();
   files.clear();
+  fileRemoteId.clear();
   rowNames.clear();
   rowExtensions.clear();
+  rowSubtitles.clear();
   rowItems.clear();
   fileNameBuffer.reset();
 }
@@ -218,6 +299,24 @@ bool FileBrowserActivity::removeDirFile(const std::string& fullPath) {
   return true;
 }
 
+// The queue resolves the destination from the manifest record itself, so only the id travels.
+void FileBrowserActivity::requestBookDownload(const std::string& remoteId) {
+  const download_queue::EnqueueOutcome outcome = download_queue::enqueue(remoteId);
+  if (outcome != download_queue::EnqueueOutcome::Ok && outcome != download_queue::EnqueueOutcome::AlreadyQueued) {
+    LOG_ERR("FileBrowser", "Enqueue failed: id=%s outcome=%d", remoteId.c_str(), static_cast<int>(outcome));
+    return;
+  }
+  requestUpdate();  // redraw so the row reports itself as downloading
+}
+
+bool FileBrowserActivity::isQueued(const download_queue::Snapshot& snap, const std::string& remoteId) {
+  if (remoteId.empty()) return false;
+  for (size_t i = 0; i < snap.count; i++) {
+    if (snap.items[i].id == remoteId) return true;
+  }
+  return false;
+}
+
 void FileBrowserActivity::activateIndex(const int index) {
   (void)index;  // base already synced nav.selected to the tapped row
   // Activation navigates or opens; a lingering flash would gray an unrelated
@@ -242,6 +341,10 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
 
   const std::string& entry = files[nav.selected];
   bool isDirectory = (entry.back() == '/');
+  // Mode::PickFirmware never merges remote entries (mergeRemoteEntries() only runs for
+  // Mode::Books), so fileRemoteId is all-empty there and this is always false in that mode.
+  const bool isPlaceholder =
+      !isDirectory && static_cast<size_t>(nav.selected) < fileRemoteId.size() && !fileRemoteId[nav.selected].empty();
 
   // Firmware picker: select file -> return path; navigate into directories normally.
   if (mode == Mode::PickFirmware && !isDirectory) {
@@ -251,6 +354,16 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
     res.isCancelled = false;
     setResult(std::move(res));
     finish();
+    return;
+  }
+
+  if (mode == Mode::Books && isPlaceholder) {
+    // Nothing to open and nothing to delete -- a placeholder's file doesn't exist on the device
+    // yet, so both a short-press/tap and a long-press route here instead of into the open/delete
+    // branches below.
+    std::string cleanBasePath = basepath;
+    if (cleanBasePath.back() != '/') cleanBasePath += "/";
+    requestBookDownload(fileRemoteId[nav.selected]);
     return;
   }
 
@@ -492,7 +605,15 @@ void FileBrowserActivity::drawFooter() {
   // STR_SELECT instead. Directories in the same picker still descend, so keep STR_OPEN there.
   const bool selectingFirmwareFile = mode == Mode::PickFirmware && !files.empty() && nav.selected >= 0 &&
                                      nav.selected < listCount() && files[nav.selected].back() != '/';
-  const char* confirmLabel = files.empty() ? "" : (selectingFirmwareFile ? tr(STR_SELECT) : tr(STR_OPEN));
+  // A selected placeholder row's Confirm action downloads rather than opens (see
+  // activateSelected()); the footer hint should say so.
+  const bool selectingPlaceholder =
+      mode == Mode::Books && !files.empty() && nav.selected >= 0 && nav.selected < listCount() &&
+      static_cast<size_t>(nav.selected) < fileRemoteId.size() && !fileRemoteId[nav.selected].empty();
+  const char* confirmLabel =
+      files.empty()
+          ? ""
+          : (selectingFirmwareFile ? tr(STR_SELECT) : (selectingPlaceholder ? tr(STR_DOWNLOAD) : tr(STR_OPEN)));
   const auto labels = mappedInput.mapLabels(backLabel, confirmLabel, files.empty() ? "" : tr(STR_DIR_UP),
                                             files.empty() ? "" : tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);

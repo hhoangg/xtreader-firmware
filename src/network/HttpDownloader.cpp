@@ -234,12 +234,12 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 #endif  // !FREEINK_NET_WOLFSSL
 
 #if defined(FREEINK_NET_WOLFSSL)
-// POST helper for small JSON exchanges (device pairing). Unlike runGetWolf(),
-// this does not stream or follow redirects: our own API's POST endpoints
-// never redirect, and the whole response is small enough to buffer via
-// SecureHttpClient's own getString().
+// POST helper for small JSON exchanges (device pairing, telemetry/feedback).
+// Unlike runGetWolf(), this does not stream or follow redirects: our own
+// API's POST endpoints never redirect, and the whole response is small
+// enough to buffer via SecureHttpClient's own getString().
 HttpDownloader::DownloadError runPostWolf(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                                          int* outStatus) {
+                                          int* outStatus, const std::string& bearerToken) {
   freeink::SecureHttpClient http;
   http.setTimeout(HTTP_TIMEOUT_MS);
   http.setInsecure();
@@ -250,6 +250,9 @@ HttpDownloader::DownloadError runPostWolf(const std::string& url, const std::str
   http.setUserAgent("CrossPoint-ESP32-" CROSSPOINT_VERSION);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
+  if (!bearerToken.empty()) {
+    http.addHeader("Authorization", std::string("Bearer ") + bearerToken);
+  }
 
   const int status = http.sendRequest("POST", jsonBody);
   outResponse = http.getString();
@@ -267,7 +270,7 @@ HttpDownloader::DownloadError runPostWolf(const std::string& url, const std::str
 // instead of esp_http_client_perform() so the body is read directly into
 // outResponse without needing an HTTP_EVENT_ON_DATA handler.
 HttpDownloader::DownloadError runPost(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                                      int* outStatus) {
+                                      int* outStatus, const std::string& bearerToken) {
   esp_http_client_config_t config = {};
   config.url = url.c_str();
   config.method = HTTP_METHOD_POST;
@@ -286,6 +289,10 @@ HttpDownloader::DownloadError runPost(const std::string& url, const std::string&
   esp_http_client_set_header(client, "User-Agent", "CrossPoint-ESP32-" CROSSPOINT_VERSION);
   esp_http_client_set_header(client, "Content-Type", "application/json");
   esp_http_client_set_header(client, "Accept", "application/json");
+  if (!bearerToken.empty()) {
+    const std::string header = "Bearer " + bearerToken;
+    esp_http_client_set_header(client, "Authorization", header.c_str());
+  }
 
   esp_err_t err = esp_http_client_open(client, static_cast<int>(jsonBody.size()));
   if (err != ESP_OK) {
@@ -372,13 +379,13 @@ bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData
 }
 
 bool HttpDownloader::postJson(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                              int* outStatus) {
+                              int* outStatus, const std::string& bearerToken) {
   LOG_DBG("HTTP", "POST: %s (%zu byte body)", url.c_str(), jsonBody.size());
   outResponse.clear();
 #if defined(FREEINK_NET_WOLFSSL)
-  return runPostWolf(url, jsonBody, outResponse, outStatus) == OK;
+  return runPostWolf(url, jsonBody, outResponse, outStatus, bearerToken) == OK;
 #else
-  return runPost(url, jsonBody, outResponse, outStatus) == OK;
+  return runPost(url, jsonBody, outResponse, outStatus, bearerToken) == OK;
 #endif
 }
 

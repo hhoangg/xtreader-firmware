@@ -2,6 +2,7 @@
 
 #include <GfxRenderer.h>
 #include <I18n.h>
+#include <WiFi.h>
 
 #include <memory>
 #include <string>
@@ -9,14 +10,23 @@
 #include "MappedInputManager.h"
 #include "SyncCredentialStore.h"
 #include "SyncPairingActivity.h"
+#include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
+#include "sync/DownloadQueue.h"
+#include "sync/Telemetry.h"
 #include "util/StringUtils.h"
 
 namespace fui = freeink::ui;
 
 namespace {
-enum RowIndex : int { ROW_SERVER_URL = 0, ROW_STATUS = 1, ROW_PAIR_ACTION = 2 };
+enum RowIndex : int {
+  ROW_SERVER_URL = 0,
+  ROW_STATUS = 1,
+  ROW_PAIR_ACTION = 2,
+  ROW_REQUEST_BOOKS = 3,
+  ROW_QUEUE = 4,
+};
 
 // Character cap for the Server URL row's *value*. The list row widget draws
 // item.value right-aligned and never truncates it, so an over-long value
@@ -36,6 +46,11 @@ SyncSettingsActivity::SyncSettingsActivity(GfxRenderer& renderer, MappedInputMan
   rowItems_[ROW_STATUS].actionValue = ROW_STATUS;
   // Label refreshed per buildScreen() call -- it toggles with pairing state.
   rowItems_[ROW_PAIR_ACTION].actionValue = ROW_PAIR_ACTION;
+  rowItems_[ROW_REQUEST_BOOKS].label = tr(STR_REQUEST_BOOKS);
+  rowItems_[ROW_REQUEST_BOOKS].actionValue = ROW_REQUEST_BOOKS;
+  // Label refreshed per buildScreen() call -- it toggles with queue state,
+  // same as ROW_PAIR_ACTION above.
+  rowItems_[ROW_QUEUE].actionValue = ROW_QUEUE;
 }
 
 int SyncSettingsActivity::listCount() const { return MENU_ITEMS; }
@@ -51,6 +66,45 @@ void SyncSettingsActivity::launchPairing() {
 void SyncSettingsActivity::unlinkDevice() {
   app.clearTapFlash();
   SYNC_STORE.clearPairing();
+  requestUpdate();
+}
+
+void SyncSettingsActivity::doRequestBooks() {
+  const telemetry::TelemetryResult result = telemetry::requestBooks();
+  requestBooksStatus_ = result.ok ? tr(STR_REQUEST_BOOKS_SENT) : tr(STR_REQUEST_BOOKS_FAILED);
+  requestUpdate();
+}
+
+// POST /feedback/request-books -- the product's whole "I want more books"
+// button (docs/API.md's "Feedback and telemetry"). Brings WiFi up first,
+// same launch-WifiSelectionActivity-then-proceed pattern SyncPairingActivity
+// uses for its own first network call.
+void SyncSettingsActivity::requestBooksTapped() {
+  app.clearTapFlash();
+  if (WiFi.status() != WL_CONNECTED) {
+    startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
+                           [this](const ActivityResult& result) {
+                             if (result.isCancelled) {
+                               requestBooksStatus_ = tr(STR_REQUEST_BOOKS_FAILED);
+                               requestUpdate();
+                             } else {
+                               doRequestBooks();
+                             }
+                           });
+    return;
+  }
+  doRequestBooks();
+}
+
+// The Download Queue row doubles as its own cancel action: tapping it while
+// something is queued/downloading empties the queue (download_queue's
+// cancelAll()) -- "someone who queued ten books by mistake needs a way out
+// that is not a reboot," per the task brief. A tap while the queue is
+// already empty is a no-op.
+void SyncSettingsActivity::toggleQueueCancel() {
+  app.clearTapFlash();
+  if (download_queue::snapshot().count == 0) return;
+  download_queue::cancelAll();
   requestUpdate();
 }
 
@@ -75,6 +129,10 @@ void SyncSettingsActivity::activateIndex(const int index) {
     } else {
       launchPairing();
     }
+  } else if (index == ROW_REQUEST_BOOKS) {
+    requestBooksTapped();
+  } else if (index == ROW_QUEUE) {
+    toggleQueueCancel();
   }
   // ROW_STATUS is informational only -- no action.
 }
@@ -115,6 +173,12 @@ void SyncSettingsActivity::buildScreen(UiScreen& screen) {
 
   rowItems_[ROW_PAIR_ACTION].label = paired ? tr(STR_UNLINK_DEVICE) : tr(STR_PAIR_DEVICE);
   rowValues_[ROW_PAIR_ACTION] = paired ? SYNC_STORE.getDeviceName() : "";
+
+  rowValues_[ROW_REQUEST_BOOKS] = requestBooksStatus_;
+
+  const download_queue::Snapshot queueSnap = download_queue::snapshot();
+  rowItems_[ROW_QUEUE].label = queueSnap.count > 0 ? tr(STR_CANCEL_DOWNLOADS) : tr(STR_DOWNLOAD_QUEUE);
+  rowValues_[ROW_QUEUE] = queueSnap.count > 0 ? std::to_string(queueSnap.count) : "";
 
   for (int i = 0; i < MENU_ITEMS; i++) {
     rowItems_[i].value = rowValues_[i].empty() ? nullptr : rowValues_[i].c_str();

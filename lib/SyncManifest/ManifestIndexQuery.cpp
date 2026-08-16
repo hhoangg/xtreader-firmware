@@ -26,8 +26,7 @@ bool ManifestIndexPrefixScan::onRecord(const ManifestIndexRecord& record) {
   return !enteredRange_;
 }
 
-ManifestIndexIdLookup::ManifestIndexIdLookup(std::string id)
-    : id_(std::move(id)), reader_(&onRecordTrampoline, this) {}
+ManifestIndexIdLookup::ManifestIndexIdLookup(std::string id) : id_(std::move(id)), reader_(&onRecordTrampoline, this) {}
 
 bool ManifestIndexIdLookup::feed(const uint8_t* data, size_t len) { return reader_.feed(data, len); }
 
@@ -40,4 +39,35 @@ bool ManifestIndexIdLookup::onRecord(const ManifestIndexRecord& record) {
   found_ = true;
   record_ = record;
   return false;  // stop -- found it, no need to scan the rest of the file
+}
+
+ManifestIndexDownloadedFlagLocator::ManifestIndexDownloadedFlagLocator(std::string id, size_t capacity)
+    : id_(std::move(id)), capacity_(capacity) {}
+
+bool ManifestIndexDownloadedFlagLocator::feed(const uint8_t* data, size_t len) {
+  if (found_ || overflowed_) return false;
+
+  for (size_t i = 0; i < len; i++) {
+    const char c = static_cast<char>(data[i]);
+    if (c == '\n') {
+      ManifestIndexRecord record;
+      if (parseIndexLine(lineBuf_.data(), lineBuf_.size(), record) && record.id == id_) {
+        // The line's last character -- the `downloaded` flag -- sits right
+        // before this '\n', at lineStartOffset_ + (line length - 1).
+        flagOffset_ = lineStartOffset_ + lineBuf_.size() - 1;
+        found_ = true;
+        return false;
+      }
+      lineStartOffset_ = offset_ + 1;  // next line starts right after this '\n'
+      lineBuf_.clear();
+    } else {
+      if (lineBuf_.size() >= capacity_) {
+        overflowed_ = true;
+        return false;
+      }
+      lineBuf_ += c;
+    }
+    offset_++;
+  }
+  return true;
 }

@@ -71,3 +71,44 @@ class ManifestIndexIdLookup {
   ManifestIndexRecord record_;
   ManifestIndexReader reader_;
 };
+
+// Finds the absolute byte offset of the `downloaded` flag character for a
+// given id -- the single byte a downloader needs to seek to and overwrite
+// with '1' once a book lands on SD, instead of rewriting the whole index
+// (see ManifestIndexRecord's comment: the column exists for exactly this).
+// Unlike ManifestIndexReader/ManifestIndexPrefixScan/ManifestIndexIdLookup
+// above, this does not go through LineChunker: none of those track the
+// absolute file offset a line started at, which is exactly what this class
+// needs, so it does its own minimal line-splitting instead. Pure and
+// host-tested (test/sync_manifest_index); the device-only seek+write lives
+// in src/sync/SyncManifest.cpp's markDownloaded().
+class ManifestIndexDownloadedFlagLocator {
+ public:
+  // capacity bounds a single line's length, same role and same default as
+  // ManifestIndexReader's -- guards against an unbounded line (a corrupt
+  // index with no '\n') growing this class's line buffer without limit.
+  explicit ManifestIndexDownloadedFlagLocator(std::string id, size_t capacity = 2048);
+
+  // Feed bytes in file order, starting at file offset 0, across as many
+  // calls as the caller's read chunk size requires. Returns false once and
+  // for all once the id has been found (nothing left to look for) or the
+  // line buffer overflowed -- see hasError()/found() to tell those apart.
+  bool feed(const uint8_t* data, size_t len);
+
+  bool hasError() const { return overflowed_; }
+  bool found() const { return found_; }
+  // Valid only once found() is true: the absolute offset, from the start of
+  // the byte stream fed to this scan, of the line's `downloaded` character
+  // (its last character, immediately before the line's trailing '\n').
+  size_t flagOffset() const { return flagOffset_; }
+
+ private:
+  std::string id_;
+  std::string lineBuf_;
+  size_t capacity_;
+  size_t offset_ = 0;           // absolute offset of the next byte to be processed
+  size_t lineStartOffset_ = 0;  // absolute offset where the current (buffered) line began
+  bool found_ = false;
+  bool overflowed_ = false;
+  size_t flagOffset_ = 0;
+};

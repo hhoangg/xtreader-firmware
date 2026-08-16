@@ -163,4 +163,66 @@ TEST(ManifestIndexIdLookup, ReportsNotFoundWithoutErrorForAnUnknownId) {
   EXPECT_FALSE(lookup.found());
 }
 
+// --- ManifestIndexDownloadedFlagLocator -------------------------------------
+
+TEST(ManifestIndexDownloadedFlagLocator, FindsTheFlagByteOfAMatchingRecord) {
+  const std::string index = buildSampleIndex();
+  ManifestIndexDownloadedFlagLocator locator("bok_4");
+  locator.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  ASSERT_FALSE(locator.hasError());
+  ASSERT_TRUE(locator.found());
+
+  // The byte at flagOffset() must be the '0'/'1' flag character, immediately
+  // followed by '\n' -- exactly what markDownloaded() seeks to and overwrites.
+  ASSERT_LT(locator.flagOffset() + 1, index.size());
+  EXPECT_EQ(index[locator.flagOffset()], '0');
+  EXPECT_EQ(index[locator.flagOffset() + 1], '\n');
+}
+
+TEST(ManifestIndexDownloadedFlagLocator, FindsTheFlagByteOfTheFirstRecord) {
+  // Regression case for offset-tracking starting at 0 rather than some
+  // implicit prior line's width.
+  const std::string index = buildSampleIndex();
+  ManifestIndexDownloadedFlagLocator locator("bok_1");
+  locator.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  ASSERT_TRUE(locator.found());
+  EXPECT_EQ(index[locator.flagOffset()], '0');
+  EXPECT_EQ(index[locator.flagOffset() + 1], '\n');
+}
+
+TEST(ManifestIndexDownloadedFlagLocator, FindsTheFlagByteOfAnAlreadyDownloadedRecord) {
+  const std::string index = buildSampleIndex();  // bok_5 is written with downloaded=true
+  ManifestIndexDownloadedFlagLocator locator("bok_5");
+  locator.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  ASSERT_TRUE(locator.found());
+  EXPECT_EQ(index[locator.flagOffset()], '1');
+}
+
+TEST(ManifestIndexDownloadedFlagLocator, ReportsNotFoundWithoutErrorForAnUnknownId) {
+  const std::string index = buildSampleIndex();
+  ManifestIndexDownloadedFlagLocator locator("bok_does_not_exist");
+  locator.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  EXPECT_FALSE(locator.hasError());
+  EXPECT_FALSE(locator.found());
+}
+
+TEST(ManifestIndexDownloadedFlagLocator, WorksWhenFedInSmallChunksAcrossLineBoundaries) {
+  const std::string index = buildSampleIndex();
+  ManifestIndexDownloadedFlagLocator locator("bok_4");
+  for (size_t i = 0; i < index.size(); ++i) {
+    locator.feed(reinterpret_cast<const uint8_t*>(index.data() + i), 1);
+  }
+  ASSERT_TRUE(locator.found());
+  EXPECT_EQ(index[locator.flagOffset()], '0');
+  EXPECT_EQ(index[locator.flagOffset() + 1], '\n');
+}
+
+TEST(ManifestIndexDownloadedFlagLocator, OverflowsOnAnUnterminatedLineLongerThanCapacity) {
+  ManifestIndexDownloadedFlagLocator locator("bok_1", /*capacity=*/8);
+  const std::string noNewline(64, 'x');
+  locator.feed(reinterpret_cast<const uint8_t*>(noNewline.data()), noNewline.size());
+  EXPECT_TRUE(locator.hasError());
+  EXPECT_FALSE(locator.found());
+}
+
 }  // namespace

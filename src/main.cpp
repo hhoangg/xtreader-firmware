@@ -41,7 +41,10 @@
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "network/HttpDownloader.h"
+#include "sync/BookDownloader.h"
+#include "sync/DownloadQueue.h"
 #include "sync/SyncManifest.h"
+#include "sync/Telemetry.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 
@@ -339,6 +342,16 @@ void setupDisplayAndFonts(bool seamless = false) {
   LOG_DBG("MAIN", "Fonts setup");
 }
 
+// download_queue's SafetyCheck: enforces "sync from the library screen,
+// never with a book open" (docs/API.md's measured heap numbers -- a TLS
+// session costs ~9 KB, comfortable against the ~137 KB free on the library
+// screen, risky against the ~50 KB a reading session leaves) from the one
+// place that actually knows what activity is current, so the queue's worker
+// task pauses itself rather than every future caller having to remember to
+// check. Plain function pointer (see CLAUDE.md's "Template and std::function
+// Bloat"), matching download_queue::SafetyCheck's signature.
+static bool downloadQueueSafetyCheck() { return !activityManager.isReaderActivity(); }
+
 void setup() {
   BoardConfig::holdPowerRails();
 
@@ -436,6 +449,7 @@ void setup() {
   // NVS, not the SD card (see SyncCredentialStore.h) -- no SPI/RenderLock
   // dance needed, so it can load unconditionally at boot like the others.
   SYNC_STORE.load();
+  download_queue::setSafetyCheck(&downloadQueueSafetyCheck);
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
@@ -920,6 +934,219 @@ static void testConsoleManifestSync() {
   out += "}";
   logSerial.println(out);
 }
+
+// CMD:MANIFESTFIRST -- reports the id/path of the first entry (sorted by
+// path) in the local manifest index, so a host-side device test can pick a
+// real id to hand to CMD:BOOKDOWNLOAD/CMD:QUEUEADD without hardcoding one.
+// Requires a prior CMD:MANIFESTSYNC (or a real sync); reports found=false,
+// not an error, if the index is empty or has never been synced.
+static void testConsoleManifestFirst() {
+  struct FirstMatch {
+    std::string id;
+    std::string path;
+    bool found = false;
+  };
+  FirstMatch match;
+  const auto onMatch = [](void* ctxPtr, const ManifestIndexRecord& record) -> bool {
+    auto* m = static_cast<FirstMatch*>(ctxPtr);
+    m->id = record.id;
+    m->path = record.path;
+    m->found = true;
+    return false;  // one match is enough -- stop the scan
+  };
+  sync_manifest::listByPrefix("", onMatch, &match);
+
+  String out = "[TEST] {\"found\":";
+  out += (match.found ? "true" : "false");
+  out += ",\"id\":";
+  appendJsonEscaped(out, match.id.data(), match.id.size());
+  out += ",\"path\":";
+  appendJsonEscaped(out, match.path.data(), match.path.size());
+  out += "}";
+  logSerial.println(out);
+}
+
+// CMD:BOOKDOWNLOAD <id> -- probes GET /library/:id/file end to end (the
+// exact code path a real download will use: book_downloader::download(),
+// HttpDownloader with a Bearer token, streamed to a temp file, renamed into
+// place, the manifest index's downloaded flag flipped). Requires the id to
+// already be in the local manifest index (run CMD:MANIFESTSYNC first).
+// Brings WiFi up first, same as CMD:HTTPGET/CMD:MANIFESTSYNC. Reports a
+// single [TEST] JSON line with the same three-point heap sampling.
+static void testConsoleBookDownload(const std::string& id) {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  book_downloader::DownloadResult result;
+  if (wifiConnected) {
+    result = book_downloader::download(id);
+  } else {
+    result.error = "wifi";
+  }
+
+  String out = "[TEST] {";
+  out += "\"wifiConnected\":";
+  out += (wifiConnected ? "true" : "false");
+  out += ",\"ssid\":";
+  appendJsonEscaped(out, ssid.data(), ssid.size());
+  out += ",\"ok\":";
+  out += (result.ok ? "true" : "false");
+  out += ",\"error\":";
+  appendJsonEscaped(out, result.error.data(), result.error.size());
+  out += ",\"httpStatus\":";
+  out += String(result.httpStatus);
+  out += ",\"bytesDownloaded\":";
+  out += String(static_cast<unsigned>(result.bytesDownloaded));
+  out += ",\"destPath\":";
+  appendJsonEscaped(out, result.destPath.data(), result.destPath.size());
+  out += ",\"heapBeforeFree\":";
+  out += String(static_cast<unsigned>(result.beforeRequest.freeHeap));
+  out += ",\"heapBeforeMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.beforeRequest.maxAllocHeap));
+  out += ",\"heapTlsFree\":";
+  out += String(static_cast<unsigned>(result.afterHandshake.freeHeap));
+  out += ",\"heapTlsMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.afterHandshake.maxAllocHeap));
+  out += ",\"heapAfterFree\":";
+  out += String(static_cast<unsigned>(result.afterDownload.freeHeap));
+  out += ",\"heapAfterMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.afterDownload.maxAllocHeap));
+  out += "}";
+  logSerial.println(out);
+}
+
+// CMD:QUEUEADD <id> -- brings WiFi up (same as above) and enqueues `id` onto
+// the background download_queue, mirroring how the file browser will call
+// it once wired up. Reports the enqueue outcome immediately; the actual
+// download happens on the worker task and is watched via CMD:QUEUESTATUS.
+static void testConsoleQueueAdd(const std::string& id) {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  const download_queue::EnqueueOutcome outcome =
+      wifiConnected ? download_queue::enqueue(id) : download_queue::EnqueueOutcome::NotPaired;
+
+  const char* outcomeStr = "unknown";
+  switch (outcome) {
+    case download_queue::EnqueueOutcome::Ok:
+      outcomeStr = "ok";
+      break;
+    case download_queue::EnqueueOutcome::Full:
+      outcomeStr = "full";
+      break;
+    case download_queue::EnqueueOutcome::AlreadyQueued:
+      outcomeStr = "already_queued";
+      break;
+    case download_queue::EnqueueOutcome::NotFound:
+      outcomeStr = "not_found";
+      break;
+    case download_queue::EnqueueOutcome::NotPaired:
+      outcomeStr = "not_paired";
+      break;
+  }
+
+  logSerial.printf("[TEST] {\"wifiConnected\":%s,\"outcome\":\"%s\"}\n", wifiConnected ? "true" : "false", outcomeStr);
+}
+
+// CMD:QUEUESTATUS -- a snapshot of the queue's current state (no network,
+// no WiFi bring-up): item count, whether the worker task is running, the
+// front item's progress if one is downloading, and the most recent
+// finished item's outcome (a failure is visible here, not silent).
+static void testConsoleQueueStatus() {
+  const download_queue::Snapshot snap = download_queue::snapshot();
+
+  String out = "[TEST] {\"count\":";
+  out += String(static_cast<unsigned>(snap.count));
+  out += ",\"workerRunning\":";
+  out += (snap.workerRunning ? "true" : "false");
+  if (snap.count > 0) {
+    const download_queue::QueueItem& front = snap.items[0];
+    out += ",\"frontId\":";
+    appendJsonEscaped(out, front.id.data(), front.id.size());
+    out += ",\"frontDownloaded\":";
+    out += String(static_cast<unsigned>(front.downloadedBytes));
+    out += ",\"frontTotal\":";
+    out += String(static_cast<unsigned>(front.totalBytes));
+  }
+  out += ",\"lastResultAvailable\":";
+  out += (snap.lastResult.hasResult ? "true" : "false");
+  if (snap.lastResult.hasResult) {
+    out += ",\"lastResultId\":";
+    appendJsonEscaped(out, snap.lastResult.id.data(), snap.lastResult.id.size());
+    out += ",\"lastResultOk\":";
+    out += (snap.lastResult.ok ? "true" : "false");
+    out += ",\"lastResultError\":";
+    appendJsonEscaped(out, snap.lastResult.error.data(), snap.lastResult.error.size());
+  }
+  out += "}";
+  logSerial.println(out);
+}
+
+// CMD:QUEUECANCEL -- empties the queue and aborts whatever is downloading.
+static void testConsoleQueueCancel() {
+  download_queue::cancelAll();
+  logSerial.println("[TEST] {\"cancelled\":true}");
+}
+
+// CMD:HEARTBEAT -- POST /devices/heartbeat with a minimal, fixed payload
+// (just the firmware version -- every other field is optional and omitted).
+// Brings WiFi up first.
+static void testConsoleHeartbeat() {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  telemetry::TelemetryResult result;
+  if (wifiConnected) {
+    result = telemetry::sendHeartbeat(telemetry::HeartbeatInfo{});
+  } else {
+    result.error = "wifi";
+  }
+
+  logSerial.printf("[TEST] {\"wifiConnected\":%s,\"ok\":%s,\"httpStatus\":%d,\"error\":\"%s\"}\n",
+                   wifiConnected ? "true" : "false", result.ok ? "true" : "false", result.httpStatus,
+                   result.error.c_str());
+}
+
+// CMD:REQUESTBOOKS -- POST /feedback/request-books. Brings WiFi up first.
+static void testConsoleRequestBooks() {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  telemetry::TelemetryResult result;
+  if (wifiConnected) {
+    result = telemetry::requestBooks();
+  } else {
+    result.error = "wifi";
+  }
+
+  logSerial.printf("[TEST] {\"wifiConnected\":%s,\"ok\":%s,\"httpStatus\":%d,\"error\":\"%s\"}\n",
+                   wifiConnected ? "true" : "false", result.ok ? "true" : "false", result.httpStatus,
+                   result.error.c_str());
+}
+
+// CMD:BOOKFINISHED <id> -- POST /events/book-finished with {"bookId": id}.
+// Brings WiFi up first. Not wired into ReaderActivity's own "book finished"
+// detection by this task -- see this task's report for why.
+static void testConsoleBookFinished(const std::string& id) {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  telemetry::TelemetryResult result;
+  if (wifiConnected) {
+    result = telemetry::bookFinished(id);
+  } else {
+    result.error = "wifi";
+  }
+
+  logSerial.printf("[TEST] {\"wifiConnected\":%s,\"ok\":%s,\"httpStatus\":%d,\"error\":\"%s\"}\n",
+                   wifiConnected ? "true" : "false", result.ok ? "true" : "false", result.httpStatus,
+                   result.error.c_str());
+}
 #endif
 
 void loop() {
@@ -1067,6 +1294,40 @@ void loop() {
         }
       } else if (cmd == "MANIFESTSYNC") {
         testConsoleManifestSync();
+      } else if (cmd == "MANIFESTFIRST") {
+        testConsoleManifestFirst();
+      } else if (cmd.startsWith("BOOKDOWNLOAD ")) {
+        String idArg = cmd.substring(13);
+        idArg.trim();
+        if (idArg.length() > 0) {
+          testConsoleBookDownload(std::string(idArg.c_str()));
+        } else {
+          handled = false;
+        }
+      } else if (cmd.startsWith("QUEUEADD ")) {
+        String idArg = cmd.substring(9);
+        idArg.trim();
+        if (idArg.length() > 0) {
+          testConsoleQueueAdd(std::string(idArg.c_str()));
+        } else {
+          handled = false;
+        }
+      } else if (cmd == "QUEUESTATUS") {
+        testConsoleQueueStatus();
+      } else if (cmd == "QUEUECANCEL") {
+        testConsoleQueueCancel();
+      } else if (cmd == "HEARTBEAT") {
+        testConsoleHeartbeat();
+      } else if (cmd == "REQUESTBOOKS") {
+        testConsoleRequestBooks();
+      } else if (cmd.startsWith("BOOKFINISHED ")) {
+        String idArg = cmd.substring(13);
+        idArg.trim();
+        if (idArg.length() > 0) {
+          testConsoleBookFinished(std::string(idArg.c_str()));
+        } else {
+          handled = false;
+        }
       } else if (cmd == "SLEEP") {
         // Last known-good marker for the host to compare against once the device
         // wakes back up (or to inspect if it never does). Printed before the ack,

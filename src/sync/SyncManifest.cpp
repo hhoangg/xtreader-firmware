@@ -272,4 +272,48 @@ bool isDownloaded(const std::string& id) {
   return findById(id, record) && record.downloaded;
 }
 
+bool markDownloaded(const std::string& id) {
+  if (!Storage.exists(INDEX_PATH)) return false;
+
+  // O_RDWR, not openFileForWrite: that helper's O_CREAT | O_TRUNC would blow
+  // the whole index away just to flip one byte. This needs the file opened
+  // in place, read to find the flag's offset, then seek back and overwrite
+  // only that byte.
+  HalFile file = Storage.open(INDEX_PATH, O_RDWR);
+  if (!file) {
+    LOG_ERR("SYNC", "Failed to open %s for read/write", INDEX_PATH);
+    return false;
+  }
+
+  ManifestIndexDownloadedFlagLocator locator(id);
+  uint8_t buf[QUERY_READ_CHUNK];
+  while (!locator.found() && !locator.hasError()) {
+    const int n = file.read(buf, sizeof(buf));
+    if (n <= 0) break;
+    locator.feed(buf, static_cast<size_t>(n));
+  }
+
+  if (locator.hasError()) {
+    LOG_ERR("SYNC", "Corrupt index line while looking for id %s in %s", id.c_str(), INDEX_PATH);
+    return false;
+  }
+  if (!locator.found()) {
+    LOG_ERR("SYNC", "markDownloaded: id %s not found in %s", id.c_str(), INDEX_PATH);
+    return false;
+  }
+
+  if (!file.seekSet(locator.flagOffset())) {
+    LOG_ERR("SYNC", "Failed to seek to flag offset for id %s in %s", id.c_str(), INDEX_PATH);
+    return false;
+  }
+  const uint8_t one = '1';
+  const size_t written = file.write(&one, 1);
+  file.flush();
+  if (written != 1) {
+    LOG_ERR("SYNC", "Short write flipping downloaded flag for id %s in %s", id.c_str(), INDEX_PATH);
+    return false;
+  }
+  return true;
+}
+
 }  // namespace sync_manifest
