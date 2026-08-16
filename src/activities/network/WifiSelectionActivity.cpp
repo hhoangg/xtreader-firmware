@@ -1050,6 +1050,12 @@ void WifiSelectionActivity::renderConnecting(const Rect* screen, const ThemeMetr
     UITheme::drawCenteredWrappedText(renderer, statusBounds, UI_12_FONT_ID, statusText, MAX_STATUS_LINES, true,
                                      EpdFontFamily::BOLD, UITheme::TextVerticalAlignment::BOTTOM);
 
+    // Trailing-ellipsis, not StringUtils::middleEllipsis: this is a centered
+    // status line, not a list row value, and the SSID's start (not its
+    // middle/tail) is what a "connecting to..." message needs to keep. A
+    // future long-value *list row* should reach for middleEllipsis instead
+    // of adding a third copy of this pattern -- see SyncSettingsActivity's
+    // Server URL row for that case.
     std::string ssidInfo = std::string(tr(STR_TO_PREFIX)) + selectedSSID;
     if (ssidInfo.length() > 25) {
       ssidInfo.replace(22, ssidInfo.length() - 22, "...");
@@ -1068,6 +1074,8 @@ void WifiSelectionActivity::renderConnected(const Rect* screen, const ThemeMetri
 
   UITheme::drawCenteredText(renderer, *screen, UI_12_FONT_ID, top - 30, tr(STR_CONNECTED), true, EpdFontFamily::BOLD);
 
+  // Same trailing-ellipsis reasoning as renderConnecting() above -- not
+  // StringUtils::middleEllipsis, see that comment.
   std::string ssidInfo = std::string(tr(STR_NETWORK_PREFIX)) + selectedSSID;
   if (ssidInfo.length() > 28) {
     ssidInfo.replace(25, ssidInfo.length() - 25, "...");

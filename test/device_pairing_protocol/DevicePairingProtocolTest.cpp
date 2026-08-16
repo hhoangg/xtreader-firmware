@@ -110,6 +110,4 @@ TEST(DeviceTokenPollError, MissingErrorFieldIsNone) {
   EXPECT_EQ(parseErr(R"({"message":"nope"})"), DeviceTokenPollError::NONE);
 }
 
-TEST(DeviceTokenPollError, MalformedJsonIsNone) {
-  EXPECT_EQ(parseErr("not json at all"), DeviceTokenPollError::NONE);
-}
+TEST(DeviceTokenPollError, MalformedJsonIsNone) { EXPECT_EQ(parseErr("not json at all"), DeviceTokenPollError::NONE); }

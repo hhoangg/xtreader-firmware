@@ -12,9 +12,7 @@ TEST(MiddleEllipsis, ValueExactlyAtLimitPassesThroughUnchanged) {
   EXPECT_EQ(StringUtils::middleEllipsis(value, 24), value);
 }
 
-TEST(MiddleEllipsis, EmptyValuePassesThroughUnchanged) {
-  EXPECT_EQ(StringUtils::middleEllipsis("", 24), "");
-}
+TEST(MiddleEllipsis, EmptyValuePassesThroughUnchanged) { EXPECT_EQ(StringUtils::middleEllipsis("", 24), ""); }
 
 TEST(MiddleEllipsis, LongUrlKeepsHostPrefixAndTail) {
   // The real value from the pairing hub's Server URL row that motivated

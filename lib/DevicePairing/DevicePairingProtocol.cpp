@@ -45,11 +45,16 @@ void codeOnKey(void* ctx, const char* key, size_t len) {
   auto* self = static_cast<CodeCtx*>(ctx);
   self->lastKey = CodeKey::NONE;
   if (self->depth != 1) return;
-  if (matches(key, len, "deviceCode")) self->lastKey = CodeKey::DEVICE_CODE;
-  else if (matches(key, len, "userCode")) self->lastKey = CodeKey::USER_CODE;
-  else if (matches(key, len, "verificationUriComplete")) self->lastKey = CodeKey::VERIFICATION_URI_COMPLETE;
-  else if (matches(key, len, "expiresIn")) self->lastKey = CodeKey::EXPIRES_IN;
-  else if (matches(key, len, "interval")) self->lastKey = CodeKey::INTERVAL;
+  if (matches(key, len, "deviceCode"))
+    self->lastKey = CodeKey::DEVICE_CODE;
+  else if (matches(key, len, "userCode"))
+    self->lastKey = CodeKey::USER_CODE;
+  else if (matches(key, len, "verificationUriComplete"))
+    self->lastKey = CodeKey::VERIFICATION_URI_COMPLETE;
+  else if (matches(key, len, "expiresIn"))
+    self->lastKey = CodeKey::EXPIRES_IN;
+  else if (matches(key, len, "interval"))
+    self->lastKey = CodeKey::INTERVAL;
 }
 
 void codeOnString(void* ctx, const char* value, size_t len) {
@@ -75,8 +80,10 @@ void codeOnString(void* ctx, const char* value, size_t len) {
 
 void codeOnNumber(void* ctx, const char* value, size_t len) {
   auto* self = static_cast<CodeCtx*>(ctx);
-  if (self->lastKey == CodeKey::EXPIRES_IN) self->out->expiresIn = parseUintToken(value, len);
-  else if (self->lastKey == CodeKey::INTERVAL) self->out->interval = parseUintToken(value, len);
+  if (self->lastKey == CodeKey::EXPIRES_IN)
+    self->out->expiresIn = parseUintToken(value, len);
+  else if (self->lastKey == CodeKey::INTERVAL)
+    self->out->interval = parseUintToken(value, len);
   self->lastKey = CodeKey::NONE;
 }
 
@@ -119,10 +126,14 @@ void tokenOnKey(void* ctx, const char* key, size_t len) {
     return;
   }
   if (self->depth != 1) return;
-  if (matches(key, len, "accessToken")) self->lastKey = TokenKey::ACCESS_TOKEN;
-  else if (matches(key, len, "deviceId")) self->lastKey = TokenKey::DEVICE_ID;
-  else if (matches(key, len, "deviceName")) self->lastKey = TokenKey::DEVICE_NAME;
-  else if (matches(key, len, "account")) self->lastKey = TokenKey::ACCOUNT;
+  if (matches(key, len, "accessToken"))
+    self->lastKey = TokenKey::ACCESS_TOKEN;
+  else if (matches(key, len, "deviceId"))
+    self->lastKey = TokenKey::DEVICE_ID;
+  else if (matches(key, len, "deviceName"))
+    self->lastKey = TokenKey::DEVICE_NAME;
+  else if (matches(key, len, "account"))
+    self->lastKey = TokenKey::ACCOUNT;
 }
 
 void tokenOnString(void* ctx, const char* value, size_t len) {
@@ -185,10 +196,14 @@ void errOnKey(void* ctx, const char* key, size_t len) {
 void errOnString(void* ctx, const char* value, size_t len) {
   auto* self = static_cast<ErrCtx*>(ctx);
   if (self->matchingError) {
-    if (matches(value, len, "authorization_pending")) self->result = DeviceTokenPollError::AUTHORIZATION_PENDING;
-    else if (matches(value, len, "slow_down")) self->result = DeviceTokenPollError::SLOW_DOWN;
-    else if (matches(value, len, "access_denied")) self->result = DeviceTokenPollError::ACCESS_DENIED;
-    else if (matches(value, len, "expired_token")) self->result = DeviceTokenPollError::EXPIRED_TOKEN;
+    if (matches(value, len, "authorization_pending"))
+      self->result = DeviceTokenPollError::AUTHORIZATION_PENDING;
+    else if (matches(value, len, "slow_down"))
+      self->result = DeviceTokenPollError::SLOW_DOWN;
+    else if (matches(value, len, "access_denied"))
+      self->result = DeviceTokenPollError::ACCESS_DENIED;
+    else if (matches(value, len, "expired_token"))
+      self->result = DeviceTokenPollError::EXPIRED_TOKEN;
   }
   self->matchingError = false;
 }

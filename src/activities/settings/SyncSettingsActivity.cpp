@@ -18,23 +18,14 @@ namespace fui = freeink::ui;
 namespace {
 enum RowIndex : int { ROW_SERVER_URL = 0, ROW_STATUS = 1, ROW_PAIR_ACTION = 2 };
 
-// Character cap for the Server URL row's *value* text (not the "Server URL"
-// label, which must never lose space to it). The list row widget
-// (freeink-sdk's components/lists/list.h) measures item.value at full width
-// and draws it right-aligned with no truncation of its own; if it's wider
-// than the row's available band, the label side gets a negative width and
-// vanishes entirely while the value overflows off the row's left edge --
-// exactly what happened with the production default,
-// "crosspoint-sync.hoangxuan2402.workers.dev" (see the pairing brief's
-// screenshot: "lt: crosspoint-sync.hoangxuan2402.workers.dev", the tail end
-// of "Default: crosspoint-sync..." with everything before "lt" clipped
-// off-screen). There is no pixel-based truncation helper in this codebase
-// (checked list.h and StringUtils before adding middleEllipsis -- see its
-// own comment); this is a character-count heuristic instead, sized to what
-// KOReaderSettingsActivity's equivalent "Sync Server URL" row (same
-// "Default: <url>" shape, its own default is short enough to never have hit
-// this) comfortably fits.
-constexpr size_t SERVER_URL_VALUE_MAX_CHARS = 24;
+// Character cap for the Server URL row's *value*. The list row widget draws
+// item.value right-aligned and never truncates it, so an over-long value
+// takes width from the label until the label disappears off the row. The cap
+// is a deliberately wide margin rather than a measured fit: the label must
+// always render whole, and an abbreviated URL beside it is the acceptable
+// trade. middleEllipsis() is a no-op once the value already fits, so a short
+// self-hosted URL is left alone.
+constexpr size_t SERVER_URL_VALUE_MAX_CHARS = 12;
 }  // namespace
 
 SyncSettingsActivity::SyncSettingsActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
@@ -68,17 +59,16 @@ void SyncSettingsActivity::activateIndex(const int index) {
     app.clearTapFlash();
     const std::string currentUrl = SYNC_STORE.getServerUrl();
     const std::string prefillUrl = currentUrl.empty() ? "https://" : currentUrl;
-    startActivityForResult(std::make_unique<KeyboardEntryActivity>(renderer, mappedInput,
-                                                                    tr(STR_CROSSPOINT_SYNC_SERVER_URL), prefillUrl,
-                                                                    128, InputType::Url),
-                           [this](const ActivityResult& result) {
-                             if (!result.isCancelled) {
-                               const auto& kb = std::get<KeyboardResult>(result.data);
-                               const std::string urlToSave =
-                                   (kb.text == "https://" || kb.text == "http://") ? "" : kb.text;
-                               SYNC_STORE.setServerUrl(urlToSave);
-                             }
-                           });
+    startActivityForResult(
+        std::make_unique<KeyboardEntryActivity>(renderer, mappedInput, tr(STR_CROSSPOINT_SYNC_SERVER_URL), prefillUrl,
+                                                128, InputType::Url),
+        [this](const ActivityResult& result) {
+          if (!result.isCancelled) {
+            const auto& kb = std::get<KeyboardResult>(result.data);
+            const std::string urlToSave = (kb.text == "https://" || kb.text == "http://") ? "" : kb.text;
+            SYNC_STORE.setServerUrl(urlToSave);
+          }
+        });
   } else if (index == ROW_PAIR_ACTION) {
     if (SYNC_STORE.isPaired()) {
       unlinkDevice();
@@ -110,19 +100,16 @@ void SyncSettingsActivity::buildScreen(UiScreen& screen) {
 
   const bool paired = SYNC_STORE.isPaired();
 
-  const std::string configuredUrl = SYNC_STORE.getServerUrl();
-  if (configuredUrl.empty()) {
-    std::string defaultUrl = SYNC_STORE.getBaseUrl();
-    const auto schemeEnd = defaultUrl.find("://");
-    if (schemeEnd != std::string::npos) defaultUrl.erase(0, schemeEnd + 3);
-    // Only the URL itself is shortened -- "Default: " stays intact, it's
-    // short and tells the self-hoster this is the built-in server, not one
-    // they configured.
-    rowValues_[ROW_SERVER_URL] =
-        std::string(tr(STR_DEFAULT_VALUE)) + ": " + StringUtils::middleEllipsis(defaultUrl, SERVER_URL_VALUE_MAX_CHARS);
-  } else {
-    rowValues_[ROW_SERVER_URL] = StringUtils::middleEllipsis(configuredUrl, SERVER_URL_VALUE_MAX_CHARS);
+  // Just the URL -- no "Default: " prefix. The row is already labelled
+  // "Server URL"; the prefix told the reader nothing they couldn't already
+  // see, and every character it spent was a character the label needed.
+  std::string url = SYNC_STORE.getServerUrl();
+  if (url.empty()) {
+    url = SYNC_STORE.getBaseUrl();
+    const auto schemeEnd = url.find("://");
+    if (schemeEnd != std::string::npos) url.erase(0, schemeEnd + 3);
   }
+  rowValues_[ROW_SERVER_URL] = StringUtils::middleEllipsis(url, SERVER_URL_VALUE_MAX_CHARS);
 
   rowValues_[ROW_STATUS] = paired ? SYNC_STORE.getAccountEmail() : tr(STR_NOT_PAIRED);
 

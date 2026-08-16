@@ -314,8 +314,8 @@ void SyncPairingActivity::render(RenderLock&&) {
     // the countdown -- three UI_10 lines plus spacing.
     const int textBlockHeight = height * 3 + metrics.verticalSpacing * 3;
     const int qrSide = pageWidth - 40;
-    const int qrHeight = pageHeight - metrics.topPadding - metrics.headerHeight - metrics.verticalSpacing * 2 -
-                        textBlockHeight - 20;
+    const int qrHeight =
+        pageHeight - metrics.topPadding - metrics.headerHeight - metrics.verticalSpacing * 2 - textBlockHeight - 20;
     const Rect qrBounds(20, startY, qrSide, qrHeight);
     QrUtils::drawQrCode(renderer, qrBounds, code_.verificationUriComplete);
 
