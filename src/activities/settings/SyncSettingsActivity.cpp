@@ -148,6 +148,21 @@ void SyncSettingsActivity::doManifestSync() {
   }
   const sync_manifest::SyncResult result = sync_manifest::sync();
   syncNowStatus_ = result.ok ? tr(STR_SYNC_NOW_DONE) : tr(STR_SYNC_NOW_FAILED);
+
+  // The radio is already up and paid for by the sync above, so the heartbeat
+  // rides along -- same arrangement HomeActivity::trySyncLibrary() uses. This
+  // is the only button that forces a refresh on demand, so leaving it out
+  // meant the one deliberate way to update the device's own figures did not.
+  // Best-effort: diagnostics must not change what the reader is told about
+  // their library sync.
+  telemetry::HeartbeatInfo heartbeatInfo = telemetry::currentDeviceHeartbeatInfo();
+  heartbeatInfo.lastSyncStatus = result.ok ? "ok" : "failed";
+  const telemetry::TelemetryResult heartbeatResult = telemetry::sendHeartbeat(heartbeatInfo);
+  if (!heartbeatResult.ok) {
+    LOG_DBG("SYNCSET", "Heartbeat piggybacked on Sync Now failed (error=%s status=%d) -- diagnostics only",
+            heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
+  }
+
   requestUpdate();
 }
 
