@@ -1,0 +1,179 @@
+- generic:
+  - generic:
+    - generic:
+      - navigation:
+        - generic:
+          - generic: C
+          - generic: CrossPoint
+        - link:
+          - /url: /
+          - text: Dashboard
+        - link:
+          - /url: /library
+          - text: Library
+        - generic:
+          - link:
+            - /url: /settings
+            - text: Settings
+      - generic:
+        - main:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - paragraph: Total books
+                  - paragraph: "3"
+              - generic:
+                - generic:
+                  - paragraph: Devices
+                  - paragraph: "2"
+              - generic:
+                - generic:
+                  - paragraph: Storage used
+                  - paragraph: 5.9 MB
+            - generic:
+              - generic:
+                - paragraph: Storage
+                - generic:
+                  - generic:
+                    - paragraph: 5.9 MB across 3 books in your bucket
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Books
+                          - generic: 5.9 MB
+            - generic:
+              - generic:
+                - generic:
+                  - generic: Connected bucket
+                  - generic: Cloudflare R2 · crosspoint-demo
+                - generic:
+                  - generic:
+                    - generic: "Endpoint: https://abc123.r2.cloudflarestorage.com"
+                    - generic: "Region: auto"
+                    - generic: "Access key: AKIADEMO1234"
+                    - generic: "Last checked: Never"
+                  - generic:
+                    - button: Test connection
+                    - button: Disconnect
+              - generic:
+                - generic:
+                  - generic: Switch to a different bucket
+                  - generic: Books are stored in an S3-compatible bucket you own and manage (R2, S3, B2, Wasabi, MinIO…), not on this server — you control the storage cost.
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic: Provider
+                      - combobox
+                    - generic:
+                      - paragraph: Where to find this for Cloudflare R2
+                      - list:
+                        - listitem:
+                          - generic: "1."
+                          - generic: Cloudflare dashboard → R2 Object Storage → create a bucket (if you don't have one yet).
+                        - listitem:
+                          - generic: "2."
+                          - generic: Open that bucket → Settings tab → copy the "S3 API" section for the Endpoint.
+                        - listitem:
+                          - generic: "3."
+                          - generic: "\"Manage R2 API Tokens\" → Create API Token → Object Read & Write permission, scoped to this bucket only."
+                        - listitem:
+                          - generic: "4."
+                          - generic: Copy the Access Key ID and Secret Access Key shown right after — the secret is shown only once.
+                    - generic:
+                      - generic: Endpoint
+                      - textbox:
+                        - /placeholder: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+                      - paragraph: Looks like https://<ACCOUNT_ID>.r2.cloudflarestorage.com — no bucket name, no trailing slash.
+                    - generic:
+                      - generic:
+                        - generic: Region
+                        - textbox: auto
+                      - generic:
+                        - generic: Bucket name
+                        - textbox
+                        - paragraph: Must match exactly, case-sensitive.
+                    - generic:
+                      - generic: Access Key ID
+                      - textbox: tester@example.com
+                    - generic:
+                      - generic: Secret Access Key
+                      - textbox:
+                        - /placeholder: Enter it again to change the saved key
+                        - text: testpass123
+                      - paragraph: Entered here only once — the server never shows this key again.
+                    - generic:
+                      - generic:
+                        - button [disabled]: Test connection
+                        - button: Save
+                      - paragraph: Test the connection before saving — an untested configuration may only surface a problem on your first upload.
+            - generic:
+              - generic:
+                - paragraph: Your devices
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - paragraph: Xteink X4 — Bedroom
+                        - paragraph: Last synced 2h ago
+                      - generic: 68%
+                      - button
+                    - generic:
+                      - generic:
+                        - paragraph: Xteink X4 — Office
+                        - paragraph: Last synced 3d ago
+                      - generic: 12%
+                      - button
+            - generic:
+              - generic:
+                - paragraph: Sync activity
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Aug
+                          - generic: Sep
+                          - generic: Oct
+                          - generic: Nov
+                          - generic: Dec
+                          - generic: Jan
+                          - generic: Feb
+                          - generic: Mar
+                          - generic: Apr
+                          - generic: May
+                          - generic: Jun
+                          - generic: Jul
+                          - generic: Aug
+                        - generic:
+                          - generic:
+                            - generic: Mon
+                            - generic: Wed
+                            - generic: Fri
+                    - generic:
+                      - generic: Less
+                      - generic: More
+                    - paragraph: Each cell is a day a sync arrived, not necessarily a day you read — your reader has no clock, so a few days of offline reading followed by one sync show up as a single dense cell.
+            - generic:
+              - generic:
+                - paragraph: Recent activity
+                - generic:
+                  - generic:
+                    - generic: Xteink X4 — Bedroom just finished a book
+                    - button: Acknowledge
+                    - generic: 2h ago
+                  - generic:
+                    - generic: Xteink X4 — Bedroom failed to sync
+                    - generic: Acknowledged
+                    - generic: 3h ago
+                  - generic:
+                    - generic: Xteink X4 — Office wants more books
+                    - button: Acknowledge
+                    - generic: 1d ago
+  - alertdialog [ref=f37e626]:
+    - generic [ref=f37e631]:
+      - heading "Disconnect this bucket?" [level=2] [ref=f37e632]
+      - paragraph [ref=f37e633]: This immediately stops CrossPoint Sync from reading or writing to this bucket — uploads and new syncs fail until you reconnect. Books already uploaded stay in the bucket untouched.
+    - generic [ref=f37e634]:
+      - button "Cancel" [active] [ref=f37e635]
+      - button "Disconnect" [ref=f37e636]

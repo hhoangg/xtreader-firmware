@@ -1,6 +1,9 @@
 #include "Telemetry.h"
 
 #include <ArduinoJson.h>
+#include <HalPowerManager.h>
+#include <HalStorage.h>
+#include <HeartbeatPayload.h>
 #include <Logging.h>
 
 #include "SyncCredentialStore.h"
@@ -50,6 +53,7 @@ TelemetryResult sendHeartbeat(const HeartbeatInfo& info) {
   JsonDocument doc;
   doc["firmwareVersion"] = CROSSPOINT_VERSION;
   if (info.batteryPercent >= 0) doc["batteryPercent"] = info.batteryPercent;
+  if (info.sdTotalBytes != UINT64_MAX) doc["sdTotalBytes"] = info.sdTotalBytes;
   if (info.sdFreeBytes != UINT64_MAX) doc["sdFreeBytes"] = info.sdFreeBytes;
   if (!info.lastSyncStatus.empty()) doc["lastSyncStatus"] = info.lastSyncStatus;
   if (!info.lastErrorCode.empty()) doc["lastErrorCode"] = info.lastErrorCode;
@@ -58,6 +62,15 @@ TelemetryResult sendHeartbeat(const HeartbeatInfo& info) {
   std::string body;
   serializeJson(doc, body);
   return post("/devices/heartbeat", body);
+}
+
+HeartbeatInfo currentDeviceHeartbeatInfo() {
+  HeartbeatInfo info;
+  info.batteryPercent = powerManager.getBatteryPercentage();
+  const uint64_t totalBytes = Storage.sdTotalBytes();
+  info.sdTotalBytes = heartbeat_payload::computeSdTotalBytes(totalBytes);
+  info.sdFreeBytes = heartbeat_payload::computeSdFreeBytes(totalBytes, Storage.sdUsedBytes());
+  return info;
 }
 
 TelemetryResult requestBooks() { return post("/feedback/request-books", ""); }

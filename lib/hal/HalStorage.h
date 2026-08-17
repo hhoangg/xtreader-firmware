@@ -4,6 +4,7 @@
 #include <common/FsApiConstants.h>  // for oflag_t
 #include <freertos/semphr.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,6 +30,13 @@ class HalStorage {
   bool writeFile(const char* path, const String& content);
   // Ensure a directory exists, creating it if necessary. Returns true on success.
   bool ensureDirectoryExists(const char* path);
+
+  // Total card capacity in bytes. Cached by SDCardManager at begin(); 0 if not mounted.
+  uint64_t sdTotalBytes() const;
+  // Used space in bytes, cached by SDCardManager with a 20-second TTL (a fresh scan walks the
+  // FAT and is too slow to call every frame). 0 if not mounted or the cluster count cannot be
+  // determined. Safe to call as often as needed -- the TTL, not the caller, bounds the SD cost.
+  uint64_t sdUsedBytes();
 
   HalFile open(const char* path, const oflag_t oflag = O_RDONLY);
   bool mkdir(const char* path, const bool pFlag = true);

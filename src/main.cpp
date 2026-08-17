@@ -1126,24 +1126,32 @@ static void testConsoleQueueCancel() {
   logSerial.println("[TEST] {\"cancelled\":true}");
 }
 
-// CMD:HEARTBEAT -- POST /devices/heartbeat with a minimal, fixed payload
-// (just the firmware version -- every other field is optional and omitted).
-// Brings WiFi up first.
+// CMD:HEARTBEAT -- POST /devices/heartbeat with the same real payload
+// (telemetry::currentDeviceHeartbeatInfo()) production call sites send:
+// live battery percentage and SD total/free bytes, everything else omitted
+// since this test console call has no sync of its own to report a status
+// for. Brings WiFi up first. Reports the payload actually sent alongside the
+// result, so it is visible from serial that real numbers went out.
 static void testConsoleHeartbeat() {
   std::string ssid;
   std::string wifiError;
   const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
 
+  telemetry::HeartbeatInfo info;
   telemetry::TelemetryResult result;
   if (wifiConnected) {
-    result = telemetry::sendHeartbeat(telemetry::HeartbeatInfo{});
+    info = telemetry::currentDeviceHeartbeatInfo();
+    result = telemetry::sendHeartbeat(info);
   } else {
     result.error = "wifi";
   }
 
-  logSerial.printf("[TEST] {\"wifiConnected\":%s,\"ok\":%s,\"httpStatus\":%d,\"error\":\"%s\"}\n",
-                   wifiConnected ? "true" : "false", result.ok ? "true" : "false", result.httpStatus,
-                   result.error.c_str());
+  logSerial.printf(
+      "[TEST] {\"wifiConnected\":%s,\"ok\":%s,\"httpStatus\":%d,\"error\":\"%s\","
+      "\"batteryPercent\":%d,\"sdTotalBytes\":%llu,\"sdFreeBytes\":%llu}\n",
+      wifiConnected ? "true" : "false", result.ok ? "true" : "false", result.httpStatus, result.error.c_str(),
+      info.batteryPercent, static_cast<unsigned long long>(info.sdTotalBytes),
+      static_cast<unsigned long long>(info.sdFreeBytes));
 }
 
 // CMD:REQUESTBOOKS -- POST /feedback/request-books. Brings WiFi up first.

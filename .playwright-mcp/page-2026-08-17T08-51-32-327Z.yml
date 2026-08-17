@@ -1,0 +1,25 @@
+- generic [ref=f13e3]:
+  - navigation "Điều hướng chính" [ref=f13e40]:
+    - generic [ref=f13e5]:
+      - generic [ref=f13e6]: C
+      - generic [ref=f13e7]: CrossPoint
+    - link "Tổng quan" [ref=f13e41] [cursor=pointer]:
+      - /url: /
+    - link "Thư viện" [ref=f13e42] [cursor=pointer]:
+      - /url: /library
+    - link "Cài đặt" [ref=f13e43] [cursor=pointer]:
+      - /url: /settings
+  - main [ref=f13e19]:
+    - generic [ref=f13e20]:
+      - generic [ref=f13e21]:
+        - generic [ref=f13e22]:
+          - generic [ref=f13e23]: Tài khoản
+          - generic [ref=f13e26]: Test User · test@example.com
+        - button "Đăng xuất" [ref=f13e44]
+      - generic [ref=f13e29]:
+        - generic [ref=f13e30]:
+          - generic [ref=f13e31]: Ngôn ngữ
+          - generic [ref=f13e34]: Chọn ngôn ngữ cho giao diện quản trị.
+        - generic [ref=f13e35]:
+          - button "English" [ref=f13e36]
+          - button "Tiếng Việt" [active] [ref=f13e39]

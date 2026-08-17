@@ -1,0 +1,71 @@
+- generic:
+  - generic:
+    - generic:
+      - navigation:
+        - generic: C
+        - link:
+          - /url: /
+          - text: Dashboard
+        - link:
+          - /url: /library
+          - text: Library
+        - link:
+          - /url: /settings
+          - text: Settings
+      - generic:
+        - main:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - generic: "6"
+                  - generic: books
+              - generic:
+                - generic:
+                  - generic: 13.9 MB
+                  - generic: storage used
+            - generic:
+              - button: Upload files
+              - generic:
+                - textbox:
+                  - /placeholder: Search this folder
+            - generic:
+              - generic:
+                - generic:
+                  - generic: Name
+                  - generic: Size
+                  - generic: Status
+                - generic:
+                  - generic:
+                    - checkbox
+                  - button:
+                    - generic: Archive
+                  - generic: —
+                  - generic:
+                    - generic:
+                      - button
+                - generic:
+                  - generic:
+                    - checkbox
+                  - button:
+                    - generic: Văn học
+                  - generic: —
+                  - generic:
+                    - generic:
+                      - button
+                - generic:
+                  - generic:
+                    - checkbox
+                  - generic: A very long book title that should truncate cleanly in the name column.epub
+                  - generic: 4.2 MB
+                  - generic: Synced
+                  - generic:
+                    - generic:
+                      - button [expanded]
+            - paragraph:
+              - text: Drag files anywhere in this list to upload, or
+              - button: browse files
+  - menu "More actions" [active] [ref=f26e101]:
+    - menuitem "Rename" [ref=f26e102] [cursor=pointer]
+    - menuitem "Move" [ref=f26e105] [cursor=pointer]
+    - menuitem "Delete" [ref=f26e108] [cursor=pointer]

@@ -6,6 +6,7 @@
 
 #include <string>
 
+#include "Telemetry.h"
 #include "WifiCredentialStore.h"
 #include "activities/Activity.h"  // completes Activity before ActivityManager.h's inline ctor needs unique_ptr<Activity>
 #include "activities/ActivityManager.h"
@@ -34,8 +35,7 @@ bool tryCredential(const std::string& ssid, const std::string& password, const u
   }
 
   const unsigned long perNetworkDeadline = millis() + PER_NETWORK_TIMEOUT_MS;
-  while (static_cast<long>(millis() - perNetworkDeadline) < 0 &&
-        static_cast<long>(millis() - overallDeadlineMs) < 0) {
+  while (static_cast<long>(millis() - perNetworkDeadline) < 0 && static_cast<long>(millis() - overallDeadlineMs) < 0) {
     resetTaskWatchdogIfSubscribed();
     const wl_status_t status = WiFi.status();
     if (status == WL_CONNECTED) return true;
@@ -89,8 +89,8 @@ bool connectToSavedWifi() {
 
 #ifdef CP_TEST_CONSOLE
 void logHeapJson(const char* when) {
-  logSerial.printf("[TEST] {\"stage\":\"sleep_sync_heap\",\"when\":\"%s\",\"freeHeap\":%u,\"maxAllocHeap\":%u}\n",
-                    when, static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+  logSerial.printf("[TEST] {\"stage\":\"sleep_sync_heap\",\"when\":\"%s\",\"freeHeap\":%u,\"maxAllocHeap\":%u}\n", when,
+                   static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 }
 #endif
 
@@ -113,6 +113,21 @@ bool trySyncBeforeSleep() {
 
   const bool sent = activityManager.syncReaderProgressForSleep();
   LOG_DBG("SLPSYNC", "Before-sleep sync %s", sent ? "sent" : "failed");
+
+  // WiFi is already up here for the progress upload above -- the other of
+  // the two moments (task brief) a heartbeat can ride along without paying
+  // its own WiFi cost. Battery is read now, at power-off, rather than at the
+  // next wake: this is the last data point the owner's dashboard gets before
+  // the device may sit idle for days, so it should reflect the state the
+  // device is actually going dark in. Best-effort like the progress upload
+  // itself: a failed heartbeat must not affect this sleep, only be logged.
+  telemetry::HeartbeatInfo heartbeatInfo = telemetry::currentDeviceHeartbeatInfo();
+  heartbeatInfo.lastSyncStatus = sent ? "ok" : "failed";
+  const telemetry::TelemetryResult heartbeatResult = telemetry::sendHeartbeat(heartbeatInfo);
+  if (!heartbeatResult.ok) {
+    LOG_DBG("SLPSYNC", "Heartbeat piggybacked on before-sleep sync failed (error=%s status=%d) -- diagnostics only",
+            heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
+  }
 
 #ifdef CP_TEST_CONSOLE
   logHeapJson("done");

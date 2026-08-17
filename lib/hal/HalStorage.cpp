@@ -59,6 +59,13 @@ bool HalStorage::writeFile(const char* path, const String& content) {
 
 bool HalStorage::ensureDirectoryExists(const char* path) { HAL_STORAGE_WRAPPED_CALL(ensureDirectoryExists, path); }
 
+uint64_t HalStorage::sdTotalBytes() const { HAL_STORAGE_WRAPPED_CALL(sdTotalBytes, ); }
+
+// Goes through the mutex like every other card-level call, even though the 20-second TTL cache
+// mostly just returns a stored value: the cache miss path (freeClusterCount) touches the shared
+// SDCardManager singleton and the SD/SPI bus, which must be serialized the same as any other SD op.
+uint64_t HalStorage::sdUsedBytes() { HAL_STORAGE_WRAPPED_CALL(sdUsedBytes, ); }
+
 class HalFile::Impl {
  public:
   Impl(FsFile&& fsFile) : file(std::move(fsFile)) {}

@@ -1,0 +1,71 @@
+- generic [ref=f25e3]:
+  - navigation "Primary" [ref=f25e4]:
+    - generic [ref=f25e5]:
+      - generic [ref=f25e6]: C
+      - generic [ref=f25e7]: CrossPoint
+    - link "Dashboard" [ref=f25e8] [cursor=pointer]:
+      - /url: /
+    - link "Library" [ref=f25e11] [cursor=pointer]:
+      - /url: /library
+    - link "Settings" [ref=f25e15] [cursor=pointer]:
+      - /url: /settings
+  - main [ref=f25e19]:
+    - generic [ref=f25e20]:
+      - generic [ref=f25e21]:
+        - generic [ref=f25e26]:
+          - generic [ref=f25e27]: "6"
+          - generic [ref=f25e28]: books
+        - generic [ref=f25e33]:
+          - generic [ref=f25e34]: 13.9 MB
+          - generic [ref=f25e35]: storage used
+      - generic [ref=f25e36]:
+        - button "Upload files" [ref=f25e37]
+        - textbox "Search this folder" [ref=f25e41]
+      - generic [ref=f25e43]:
+        - generic [ref=f25e44]:
+          - generic [ref=f25e45]: Name
+          - generic [ref=f25e46]: Size
+          - generic [ref=f25e47]: Status
+          - generic [ref=f25e48]: Modified
+        - generic [ref=f25e49]:
+          - checkbox "Select Archive" [ref=f25e51]
+          - button "Archive" [ref=f25e52]
+          - generic [ref=f25e59]: —
+          - generic [ref=f25e60]: Aug 17
+          - generic [ref=f25e62]:
+            - button "Rename \"Archive\"" [ref=f25e63]
+            - button "Move \"Archive\"" [ref=f25e66]
+            - button "Delete \"Archive\"" [ref=f25e69]
+        - generic [ref=f25e72]:
+          - checkbox "Select Văn học" [ref=f25e74]
+          - button "Văn học" [ref=f25e75]
+          - generic [ref=f25e82]: —
+          - generic [ref=f25e83]: Jul 26
+          - generic [ref=f25e85]:
+            - button "Rename \"Văn học\"" [ref=f25e86]
+            - button "Move \"Văn học\"" [ref=f25e89]
+            - button "Delete \"Văn học\"" [ref=f25e92]
+        - generic [ref=f25e95]:
+          - checkbox "Select A very long book title that should truncate cleanly in the name column.epub" [ref=f25e97]
+          - generic [ref=f25e98]: A very long book title that should truncate cleanly in the name column.epub
+          - generic [ref=f25e103]: 4.2 MB
+          - generic [ref=f25e104]: Synced
+          - generic [ref=f25e109]: Jul 23
+          - generic [ref=f25e111]:
+            - button "Rename \"A very long book title that should truncate cleanly in the name column.epub\"" [ref=f25e112]
+            - button "Move \"A very long book title that should truncate cleanly in the name column.epub\"" [ref=f25e115]
+            - button "Delete \"A very long book title that should truncate cleanly in the name column.epub\"" [ref=f25e118]
+        - generic [ref=f25e125]:
+          - checkbox "Select Test Drop Upload.epub" [disabled] [ref=f25e127]
+          - generic [ref=f25e128]: Test Drop Upload.epub
+          - generic [ref=f25e133]: —
+          - generic [ref=f25e134]:
+            - generic [ref=f25e135]: Upload failed
+            - progressbar [ref=f25e139]
+          - generic [ref=f25e140]: —
+          - generic [ref=f25e142]:
+            - button "Retry" [ref=f25e143]
+            - button "Remove from list" [ref=f25e146]
+      - paragraph [ref=f25e121]:
+        - text: Drag files anywhere in this list to upload, or
+        - button "browse files" [ref=f25e124]

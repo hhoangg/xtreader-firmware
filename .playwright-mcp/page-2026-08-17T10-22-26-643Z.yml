@@ -1,0 +1,97 @@
+- generic:
+  - generic:
+    - generic:
+      - navigation:
+        - generic:
+          - generic: C
+          - generic: CrossPoint
+        - link:
+          - /url: /
+          - text: Dashboard
+        - link:
+          - /url: /library
+          - text: Library
+        - generic:
+          - link:
+            - /url: /settings
+            - text: Settings
+      - generic:
+        - main:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - generic: "7"
+                  - generic: books
+              - generic:
+                - generic:
+                  - generic: 16.3 MB
+                  - generic: storage used
+            - generic:
+              - button: Upload files
+              - generic:
+                - textbox:
+                  - /placeholder: Search this folder
+            - generic:
+              - generic:
+                - generic:
+                  - generic: Name
+                  - generic: Size
+                  - generic: Status
+                  - generic: Modified
+                - button:
+                  - generic: Up one level
+                - generic:
+                  - generic:
+                    - checkbox
+                  - button:
+                    - generic: Foundation Saga
+                  - generic: —
+                  - generic: Aug 17
+                  - generic:
+                    - generic:
+                      - button
+                      - button
+                      - button
+                - generic:
+                  - generic:
+                    - checkbox [checked]
+                  - generic: Hyperion Renamed.epub
+                  - generic: 3.1 MB
+                  - generic: Synced
+                  - generic: Aug 17
+                  - generic:
+                    - generic:
+                      - button
+                      - button
+                      - button
+                - generic:
+                  - generic:
+                    - checkbox [checked]
+                  - generic: Neuromancer.epub
+                  - generic: 1.8 MB
+                  - generic: Synced
+                  - generic: Aug 1
+                  - generic:
+                    - generic:
+                      - button
+                      - button
+                      - button
+            - paragraph:
+              - text: Drag files anywhere in this list to upload, or
+              - button: browse files
+        - generic:
+          - generic: 2 selected
+          - button:
+            - generic: Move
+          - button:
+            - generic: Delete
+          - button:
+            - generic: Cancel selection
+  - alertdialog [ref=f21e304]:
+    - generic [ref=f21e309]:
+      - heading "Delete 2 items" [level=2] [ref=f21e310]
+      - paragraph [ref=f21e311]: This removes 2 books from your storage bucket. Every linked reader loses them on its next sync. This can't be undone.
+    - generic [ref=f21e312]:
+      - button "Cancel" [active] [ref=f21e313]
+      - button "Delete" [ref=f21e314]

@@ -1,0 +1,26 @@
+- generic [ref=f12e3]:
+  - navigation "Primary" [ref=f12e4]:
+    - generic [ref=f12e5]:
+      - generic [ref=f12e6]: C
+      - generic [ref=f12e7]: CrossPoint
+    - link "Dashboard" [ref=f12e8] [cursor=pointer]:
+      - /url: /
+    - link "Library" [ref=f12e11] [cursor=pointer]:
+      - /url: /library
+    - link "Settings" [ref=f12e15] [cursor=pointer]:
+      - /url: /settings
+  - main [ref=f12e19]:
+    - generic [ref=f12e20]:
+      - generic [ref=f12e21]:
+        - generic [ref=f12e22]:
+          - generic [ref=f12e23]: Upload books
+          - generic [ref=f12e26]: Choose a destination folder (leave blank to use the library root). Type a folder name that does not exist yet to create it — a folder only exists once it holds at least one book.
+        - generic [ref=f12e27]:
+          - generic [ref=f12e28]:
+            - generic [ref=f12e29]: Destination folder
+            - textbox "Destination folder" [disabled]:
+              - /placeholder: Fiction
+          - button "Choose File" [disabled] [ref=f12e31]
+      - generic [ref=f12e32]:
+        - heading "Library" [level=2] [ref=f12e33]
+        - paragraph [ref=f12e37]: Loading…

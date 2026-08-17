@@ -1,0 +1,62 @@
+- generic [ref=f21e3]:
+  - navigation "Primary" [ref=f21e4]:
+    - generic [ref=f21e5]:
+      - generic [ref=f21e6]: C
+      - generic [ref=f21e7]: CrossPoint
+    - link "Dashboard" [ref=f21e8] [cursor=pointer]:
+      - /url: /
+    - link "Library" [ref=f21e11] [cursor=pointer]:
+      - /url: /library
+    - link "Settings" [ref=f21e15] [cursor=pointer]:
+      - /url: /settings
+  - main [ref=f21e19]:
+    - generic [ref=f21e20]:
+      - generic [ref=f21e21]:
+        - generic [ref=f21e26]:
+          - generic [ref=f21e27]: "7"
+          - generic [ref=f21e28]: books
+        - generic [ref=f21e33]:
+          - generic [ref=f21e34]: 16.3 MB
+          - generic [ref=f21e35]: storage used
+      - generic [ref=f21e36]:
+        - button "Upload files" [ref=f21e37]
+        - textbox "Search this folder" [ref=f21e41]
+      - generic [ref=f21e43]:
+        - generic [ref=f21e44]:
+          - generic [ref=f21e45]: Name
+          - generic [ref=f21e46]: Size
+          - generic [ref=f21e47]: Status
+          - generic [ref=f21e48]: Modified
+        - button "Up one level" [ref=f21e151]
+        - generic [ref=f21e156]:
+          - checkbox "Select Foundation Series" [ref=f21e158]
+          - button "Foundation Series" [ref=f21e159]
+          - generic [ref=f21e166]: —
+          - generic [ref=f21e167]: Jul 30
+          - generic [ref=f21e169]:
+            - button "Rename \"Foundation Series\"" [ref=f21e170]
+            - button "Move \"Foundation Series\"" [ref=f21e173]
+            - button "Delete \"Foundation Series\"" [ref=f21e176]
+        - generic [ref=f21e179]:
+          - checkbox "Select Hyperion.epub" [ref=f21e181]
+          - generic [ref=f21e182]:
+            - textbox "Rename Hyperion.epub" [active] [ref=f21e231]: Hyperion.epub
+            - generic [ref=f21e232]:
+              - button "Save name" [ref=f21e233]
+              - button "Cancel rename" [ref=f21e236]
+          - generic [ref=f21e187]: 3.1 MB
+          - generic [ref=f21e188]: Synced
+          - generic [ref=f21e193]: Aug 4
+        - generic [ref=f21e205]:
+          - checkbox "Select Neuromancer.epub" [ref=f21e207]
+          - generic [ref=f21e208]: Neuromancer.epub
+          - generic [ref=f21e213]: 1.8 MB
+          - generic [ref=f21e214]: Synced
+          - generic [ref=f21e219]: Aug 1
+          - generic [ref=f21e221]:
+            - button "Rename \"Neuromancer.epub\"" [ref=f21e222]
+            - button "Move \"Neuromancer.epub\"" [ref=f21e225]
+            - button "Delete \"Neuromancer.epub\"" [ref=f21e228]
+      - paragraph [ref=f21e147]:
+        - text: Drag files anywhere in this list to upload, or
+        - button "browse files" [ref=f21e150]

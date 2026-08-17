@@ -1,0 +1,179 @@
+- generic:
+  - generic:
+    - generic:
+      - navigation:
+        - generic:
+          - generic: C
+          - generic: CrossPoint
+        - link:
+          - /url: /
+          - text: Tổng quan
+        - link:
+          - /url: /library
+          - text: Thư viện
+        - generic:
+          - link:
+            - /url: /settings
+            - text: Cài đặt
+      - generic:
+        - main:
+          - generic:
+            - generic:
+              - generic:
+                - generic:
+                  - paragraph: Tổng số sách
+                  - paragraph: "3"
+              - generic:
+                - generic:
+                  - paragraph: Thiết bị
+                  - paragraph: "2"
+              - generic:
+                - generic:
+                  - paragraph: Bộ nhớ đã dùng
+                  - paragraph: 5.9 MB
+            - generic:
+              - generic:
+                - paragraph: Bộ nhớ
+                - generic:
+                  - generic:
+                    - paragraph: 5.9 MB cho 3 cuốn sách trong bucket của bạn
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Sách
+                          - generic: 5.9 MB
+            - generic:
+              - generic:
+                - generic:
+                  - generic: Bucket đang dùng
+                  - generic: Cloudflare R2 · crosspoint-demo
+                - generic:
+                  - generic:
+                    - generic: "Endpoint: https://abc123.r2.cloudflarestorage.com"
+                    - generic: "Vùng: auto"
+                    - generic: "Access Key: AKIADEMO1234"
+                    - generic: "Kiểm tra lần cuối: Chưa từng"
+                  - generic:
+                    - button: Kiểm tra kết nối
+                    - button: Gỡ kết nối
+              - generic:
+                - generic:
+                  - generic: Đổi sang bucket khác
+                  - generic: Sách được lưu trong bucket S3 do chính bạn quản lý (R2, S3, B2, Wasabi, MinIO…), không phải trên máy chủ này — chi phí lưu trữ do bạn kiểm soát.
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic: Nhà cung cấp
+                      - combobox
+                    - generic:
+                      - paragraph: Lấy thông tin ở đâu cho Cloudflare R2
+                      - list:
+                        - listitem:
+                          - generic: "1."
+                          - generic: Cloudflare dashboard → R2 Object Storage → tạo bucket (nếu chưa có).
+                        - listitem:
+                          - generic: "2."
+                          - generic: Mở bucket đó → tab Settings → sao chép mục "S3 API" để lấy Endpoint.
+                        - listitem:
+                          - generic: "3."
+                          - generic: "\"Manage R2 API Tokens\" → Create API Token → quyền Object Read & Write, giới hạn vào đúng bucket này."
+                        - listitem:
+                          - generic: "4."
+                          - generic: Sao chép Access Key ID và Secret Access Key hiện ra ngay sau đó — secret chỉ hiện một lần duy nhất.
+                    - generic:
+                      - generic: Endpoint
+                      - textbox:
+                        - /placeholder: https://<ACCOUNT_ID>.r2.cloudflarestorage.com
+                      - paragraph: Dạng https://<ACCOUNT_ID>.r2.cloudflarestorage.com — không kèm tên bucket, không có dấu / ở cuối.
+                    - generic:
+                      - generic:
+                        - generic: Vùng (region)
+                        - textbox: auto
+                      - generic:
+                        - generic: Tên bucket
+                        - textbox
+                        - paragraph: Phải khớp chính xác, phân biệt hoa/thường.
+                    - generic:
+                      - generic: Access Key ID
+                      - textbox: tester@example.com
+                    - generic:
+                      - generic: Secret Access Key
+                      - textbox:
+                        - /placeholder: Nhập lại để đổi khoá đang lưu
+                        - text: testpass123
+                      - paragraph: Chỉ được nhập ở đây một lần — máy chủ không bao giờ hiển thị lại khoá này.
+                    - generic:
+                      - generic:
+                        - button [disabled]: Kiểm tra kết nối
+                        - button: Lưu
+                      - paragraph: Nên kiểm tra kết nối trước khi lưu — lưu một cấu hình chưa kiểm tra có thể chỉ lộ ra lỗi khi tải sách đầu tiên lên.
+            - generic:
+              - generic:
+                - paragraph: Thiết bị của bạn
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - paragraph: Xteink X4 — Bedroom
+                        - paragraph: Đồng bộ lần cuối 2 giờ trước
+                      - generic: 68%
+                      - button
+                    - generic:
+                      - generic:
+                        - paragraph: Xteink X4 — Office
+                        - paragraph: Đồng bộ lần cuối 3 ngày trước
+                      - generic: 12%
+                      - button
+            - generic:
+              - generic:
+                - paragraph: Hoạt động đồng bộ
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic:
+                        - generic:
+                          - generic: Tháng 8
+                          - generic: Tháng 9
+                          - generic: Tháng 10
+                          - generic: Tháng 11
+                          - generic: Tháng 12
+                          - generic: Tháng 1
+                          - generic: Tháng 2
+                          - generic: Tháng 3
+                          - generic: Tháng 4
+                          - generic: Tháng 5
+                          - generic: Tháng 6
+                          - generic: Tháng 7
+                          - generic: Tháng 8
+                        - generic:
+                          - generic:
+                            - generic: T2
+                            - generic: T4
+                            - generic: T6
+                    - generic:
+                      - generic: Ít hơn
+                      - generic: Nhiều hơn
+                    - paragraph: Mỗi ô là một ngày có đồng bộ, không hẳn là ngày bạn đọc — máy đọc không có đồng hồ, nên vài ngày đọc ngoại tuyến rồi đồng bộ một lần chỉ hiện thành một ô đậm.
+            - generic:
+              - generic:
+                - paragraph: Hoạt động gần đây
+                - generic:
+                  - generic:
+                    - generic: Xteink X4 — Bedroom vừa đọc xong một quyển sách
+                    - button: Xác nhận
+                    - generic: 2 giờ trước
+                  - generic:
+                    - generic: Xteink X4 — Bedroom đồng bộ không thành công
+                    - generic: Đã xác nhận
+                    - generic: 3 giờ trước
+                  - generic:
+                    - generic: Xteink X4 — Office muốn có thêm sách
+                    - button: Xác nhận
+                    - generic: 1 ngày trước
+  - alertdialog [ref=f35e627]:
+    - generic [ref=f35e632]:
+      - heading "Gỡ liên kết Xteink X4 — Bedroom" [level=2] [ref=f35e633]
+      - paragraph [ref=f35e634]: Thao tác này đăng xuất Xteink X4 — Bedroom ngay lập tức. Máy đọc sẽ không thể đồng bộ tiến độ đọc hay tải sách cho đến khi được ghép nối lại.
+    - generic [ref=f35e635]:
+      - button "Hủy" [active] [ref=f35e636]
+      - button "Gỡ liên kết" [ref=f35e637]

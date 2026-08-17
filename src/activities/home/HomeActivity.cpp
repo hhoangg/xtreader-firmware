@@ -6,6 +6,7 @@
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
+#include <Logging.h>
 #include <SyncTriggerPolicy.h>
 #include <Utf8.h>
 #include <WiFi.h>
@@ -25,6 +26,7 @@
 #include "fontIds.h"
 #include "sync/BookFinishedNotifier.h"
 #include "sync/SyncManifest.h"
+#include "sync/Telemetry.h"
 
 namespace {
 // Once-per-boot latch for trySyncLibrary(): HomeActivity is destroyed and
@@ -412,8 +414,21 @@ void HomeActivity::trySyncLibrary() {
   // FileBrowserActivity's force-delete popups, which run from the loop task
   // and do need one).
   GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
-  sync_manifest::sync();  // result not surfaced here; FileBrowserActivity reads whatever landed
-  requestUpdate();        // redraw Home without the popup
+  const sync_manifest::SyncResult syncResult = sync_manifest::sync();
+  // FileBrowserActivity reads whatever landed on SD; syncResult itself is only used below.
+  requestUpdate();  // redraw Home without the popup
+
+  // WiFi is already up for the manifest sync above -- one of the two moments
+  // (task brief) a heartbeat can ride along without paying its own WiFi cost.
+  // Best-effort: a failed heartbeat must not affect the library sync it rides
+  // with, so its result is only logged, never surfaced to the reader.
+  telemetry::HeartbeatInfo heartbeatInfo = telemetry::currentDeviceHeartbeatInfo();
+  heartbeatInfo.lastSyncStatus = syncResult.ok ? "ok" : "failed";
+  const telemetry::TelemetryResult heartbeatResult = telemetry::sendHeartbeat(heartbeatInfo);
+  if (!heartbeatResult.ok) {
+    LOG_DBG("HOME", "Heartbeat piggybacked on library sync failed (error=%s status=%d) -- diagnostics only",
+            heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
+  }
 }
 
 void HomeActivity::tryDeliverPendingBookFinished() {
