@@ -52,46 +52,53 @@ void FileBrowserActivity::loadFiles() {
   files.clear();
   fileRemoteId.clear();
 
+  // A path that exists only in the remote index (a folder synthesised into a parent listing by
+  // mergeRemoteEntries(), never created locally -- see that function's header comment) has no
+  // local directory to open here. The local scan below is therefore optional, not a precondition:
+  // skip it when there is nothing on SD at this path, but always fall through to the remote merge
+  // and the rest of loadFiles() either way, so a folder that is remote-only still lists its
+  // children instead of rendering empty.
   auto root = Storage.open(basepath.c_str());
-  if (!root || !root.isDirectory()) {
-    rebuildRowItems();  // files is empty; also drops any now-stale cached rows
-    return;
-  }
+  const bool hasLocalDir = root && root.isDirectory();
 
-  root.rewindDirectory();
+  if (hasLocalDir) {
+    root.rewindDirectory();
 
-  if (!fileNameBuffer) {
-    LOG_ERR("FileBrowser", "fileNameBuffer not allocated");
-    root.close();
-    rebuildRowItems();
-    return;
-  }
-
-  for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
-    file.getName(fileNameBuffer.get(), NAME_BUFFER_SIZE);
-    const bool isDirectory = file.isDirectory();
-    if ((!SETTINGS.showHiddenFiles && fileNameBuffer[0] == '.') ||
-        strcmp(fileNameBuffer.get(), "System Volume Information") == 0) {
-      continue;
+    if (!fileNameBuffer) {
+      LOG_ERR("FileBrowser", "fileNameBuffer not allocated");
+      root.close();
+      rebuildRowItems();
+      return;
     }
 
-    if (isDirectory) {
-      files.emplace_back(std::string(fileNameBuffer.get()) + "/");
-    } else {
-      std::string_view filename{fileNameBuffer.get()};
-      if (mode == Mode::PickFirmware) {
-        // Firmware picker: only show .bin files.
-        if (FsHelpers::checkFileExtension(filename, ".bin")) {
+    for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
+      file.getName(fileNameBuffer.get(), NAME_BUFFER_SIZE);
+      const bool isDirectory = file.isDirectory();
+      if ((!SETTINGS.showHiddenFiles && fileNameBuffer[0] == '.') ||
+          strcmp(fileNameBuffer.get(), "System Volume Information") == 0) {
+        continue;
+      }
+
+      if (isDirectory) {
+        files.emplace_back(std::string(fileNameBuffer.get()) + "/");
+      } else {
+        std::string_view filename{fileNameBuffer.get()};
+        if (mode == Mode::PickFirmware) {
+          // Firmware picker: only show .bin files.
+          if (FsHelpers::checkFileExtension(filename, ".bin")) {
+            files.emplace_back(filename);
+          }
+        } else if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
+                   FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
+                   FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename)) {
           files.emplace_back(filename);
         }
-      } else if (FsHelpers::hasEpubExtension(filename) || FsHelpers::hasXtcExtension(filename) ||
-                 FsHelpers::hasTxtExtension(filename) || FsHelpers::hasMarkdownExtension(filename) ||
-                 FsHelpers::hasBmpExtension(filename) || FsHelpers::hasPngExtension(filename)) {
-        files.emplace_back(filename);
       }
     }
+    root.close();
+  } else if (root) {
+    root.close();  // exists but isn't a directory -- nothing to enumerate locally
   }
-  root.close();
 
   fileRemoteId.assign(files.size(), std::string());  // local entries carry no remote id
   if (mode == Mode::Books) mergeRemoteEntries();
@@ -456,6 +463,23 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
     std::string cleanBasePath = basepath;
     if (cleanBasePath.back() != '/') cleanBasePath += "/";
     const std::string fullPath = cleanBasePath + entry;
+
+    // A server-only folder row (synthesised by mergeRemoteEntries() from the remote index --
+    // see loadFiles()) has no local directory for removeDirFile() to remove: confirming the
+    // usual delete dialog here would silently do nothing (Storage.open(fullPath) fails inside
+    // removeDirFile(), which only LOG_ERRs). Tell the reader plainly instead of offering a
+    // delete that can't act. Only checked for directories -- a non-directory row can only
+    // reach this branch as a genuine local file (a placeholder book row returns above, before
+    // this check, via the isPlaceholder branch).
+    if (isDirectory && !Storage.exists(fullPath.c_str())) {
+      // GUI.drawPopup() touches the framebuffer the render task also draws into; see
+      // performServerDeleteThenLocal()'s RenderLock below for why this needs the same lock.
+      // No requestUpdate() -- same reasoning as the STR_SERVER_DELETE_FAILED popup: an
+      // immediate re-render would erase this before it's readable.
+      RenderLock lock(*this);
+      GUI.drawPopup(renderer, tr(STR_NOTHING_TO_DELETE));
+      return;
+    }
 
     // A downloaded book that came from the manifest is by now a plain local
     // file (fileRemoteId is only set for placeholder rows -- see the header

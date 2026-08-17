@@ -26,11 +26,13 @@
 
 #include <cstring>
 #include <string>
+#include <vector>
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
 #include "DevicePairingPoller.h"
 #include "DevicePairingProtocol.h"
+#include "FileBrowserMerge.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -1013,6 +1015,69 @@ static void testConsoleManifestRemove(const std::string& id) {
   logSerial.printf("[TEST] {\"ok\":%s}\n", ok ? "true" : "false");
 }
 
+// CMD:BROWSEFOLDER <path> -- runs the exact local-scan + remote-index-merge logic
+// FileBrowserActivity::loadFiles() uses (see lib/FileBrowserMerge/FileBrowserMerge.h) directly
+// against a real SD card and a real /.crosspoint/remote.idx, without navigating any UI. Exists
+// because the bug this command was added to catch -- a folder that only exists in the remote
+// index (e.g. a non-ASCII name like "Văn học") rendering empty when opened -- only manifests
+// against real SdFat directory I/O (USE_UTF8_LONG_NAMES=1) and a real on-SD index; the host-side
+// FileBrowserMerge tests exercise the same merge logic with in-memory strings, which cannot catch
+// an SD- or encoding-specific regression. Reports every merged entry (name + remoteId, matching
+// file_browser_merge::MergedEntry) as one [TEST] JSON line.
+static void testConsoleBrowseFolder(const std::string& path) {
+  std::string prefix = path;
+  if (prefix.empty() || prefix.back() != '/') prefix += "/";
+
+  std::vector<std::string> localNames;
+  bool hasLocalDir = false;
+  {
+    auto root = Storage.open(path.c_str());
+    hasLocalDir = root && root.isDirectory();
+    if (hasLocalDir) {
+      root.rewindDirectory();
+      char nameBuf[500];
+      for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
+        file.getName(nameBuf, sizeof(nameBuf));
+        if ((!SETTINGS.showHiddenFiles && nameBuf[0] == '.') || strcmp(nameBuf, "System Volume Information") == 0) {
+          continue;
+        }
+        if (file.isDirectory()) {
+          localNames.emplace_back(std::string(nameBuf) + "/");
+        } else if (file_browser_merge::isRecognizedBookName(nameBuf)) {
+          localNames.emplace_back(nameBuf);
+        }
+      }
+      root.close();
+    }
+  }
+
+  file_browser_merge::FolderMerge merge(prefix, localNames, SETTINGS.showHiddenFiles);
+  const auto onMatch = [](void* ctxPtr, const ManifestIndexRecord& record) -> bool {
+    static_cast<file_browser_merge::FolderMerge*>(ctxPtr)->addRemoteRecord(record);
+    return true;  // never stop early -- every record under this folder matters
+  };
+  const bool scanOk = sync_manifest::listByPrefix(prefix, onMatch, &merge);
+
+  const auto& entries = merge.entries();
+  String out = "[TEST] {\"hasLocalDir\":";
+  out += (hasLocalDir ? "true" : "false");
+  out += ",\"scanOk\":";
+  out += (scanOk ? "true" : "false");
+  out += ",\"count\":";
+  out += String(static_cast<unsigned>(entries.size()));
+  out += ",\"entries\":[";
+  for (size_t i = 0; i < entries.size(); i++) {
+    if (i > 0) out += ",";
+    out += "{\"name\":";
+    appendJsonEscaped(out, entries[i].name.data(), entries[i].name.size());
+    out += ",\"remoteId\":";
+    appendJsonEscaped(out, entries[i].remoteId.data(), entries[i].remoteId.size());
+    out += "}";
+  }
+  out += "]}";
+  logSerial.println(out);
+}
+
 // CMD:BOOKDOWNLOAD <id> -- probes GET /library/:id/file end to end (the
 // exact code path a real download will use: book_downloader::download(),
 // HttpDownloader with a Bearer token, streamed to a temp file, renamed into
@@ -1721,6 +1786,14 @@ void loop() {
         idArg.trim();
         if (idArg.length() > 0) {
           testConsoleManifestRemove(std::string(idArg.c_str()));
+        } else {
+          handled = false;
+        }
+      } else if (cmd.startsWith("BROWSEFOLDER ")) {
+        String pathArg = cmd.substring(13);
+        pathArg.trim();
+        if (pathArg.length() > 0) {
+          testConsoleBrowseFolder(std::string(pathArg.c_str()));
         } else {
           handled = false;
         }

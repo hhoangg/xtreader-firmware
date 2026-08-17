@@ -173,6 +173,34 @@ TEST(FolderMerge, MixedFolderCombinesLocalPlaceholderAndRemoteFolderEntries) {
   EXPECT_TRUE(findEntry(entries, "RemoteFolder/")->remoteId.empty());
 }
 
+// Regression test for the "folder that only exists on the server lists nothing" bug: opening a
+// folder with a non-ASCII name that was never downloaded (localNames is empty, exactly like
+// FileBrowserActivity::loadFiles() finds when Storage.open(basepath) fails) must still list the
+// book(s) the remote index has under it.
+TEST(FolderMerge, ServerOnlyVietnameseFolderListsItsRemoteBook) {
+  FolderMerge merge("/Văn học/", {}, false);
+  merge.addRemoteRecord(makeRecord("bok_1", "/Văn học/Truyện Kiều.epub"));
+  const auto& entries = merge.entries();
+  ASSERT_EQ(entries.size(), 1u);
+  EXPECT_EQ(entries[0].name, "Truyện Kiều.epub");
+  EXPECT_EQ(entries[0].remoteId, "bok_1");
+}
+
+// Drilling into a server-only folder several levels deep -- none of "/A/", "/A/B/", "/A/B/C/"
+// exist on SD -- must resolve at the deepest level the same way a single-level server-only
+// folder does: FolderMerge only ever sees the one prefix it was constructed with (the
+// FileBrowserActivity/mergeRemoteEntries()'s job is picking that prefix, one navigation step at
+// a time; see loadFiles()'s "Up one level"/into-folder paths), so this exercises that a deep
+// prefix still surfaces its direct child correctly.
+TEST(FolderMerge, ServerOnlyFolderSeveralLevelsDeepListsItsRemoteChildren) {
+  FolderMerge merge("/A/B/C/", {}, false);
+  merge.addRemoteRecord(makeRecord("bok_1", "/A/B/C/Deep.epub"));
+  const auto& entries = merge.entries();
+  ASSERT_EQ(entries.size(), 1u);
+  EXPECT_EQ(entries[0].name, "Deep.epub");
+  EXPECT_EQ(entries[0].remoteId, "bok_1");
+}
+
 TEST(FolderMerge, TakeEntriesMovesOutAndEmptiesTheObject) {
   FolderMerge merge("/", {"A.epub"}, false);
   auto taken = merge.takeEntries();
