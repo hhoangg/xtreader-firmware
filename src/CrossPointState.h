@@ -38,6 +38,16 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // this task's report for why that bounded loss is an acceptable trade.
   std::string pendingBookFinishedPath;
 
+  // Back-off state for enterDeepSleep()'s headless before-sleep Wi-Fi
+  // attempt -- see lib/SyncManifest/SleepWifiBackoffPolicy.h for the
+  // schedule these two fields drive. Persisted here (rather than a plain
+  // static) because deep sleep is a full chip reset: nothing in RAM survives
+  // a wake, but this file does, and it is already saved unconditionally by
+  // the same APP_STATE.saveToFile() call enterDeepSleep() makes for
+  // showBootScreen, so tracking the back-off here costs no extra SD write.
+  uint8_t sleepWifiConsecutiveFailures = 0;
+  uint8_t sleepWifiSkipsRemaining = 0;
+
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);

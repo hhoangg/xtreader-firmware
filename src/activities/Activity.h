@@ -9,6 +9,7 @@
 #include "ActivityManager.h"  // for using the ActivityManager singleton
 #include "ActivityResult.h"
 #include "GfxRenderer.h"
+#include "KOReaderSyncClient.h"  // for KOReaderProgress, captureProgressForSleep()'s out-param
 #include "MappedInputManager.h"
 #include "RenderLock.h"
 #include "util/ScreenshotInfo.h"
@@ -59,13 +60,16 @@ class Activity {
   // src/sync/SleepProgressSync.h and lib/SyncManifest/SyncTriggerPolicy.h's
   // shouldSyncBeforeSleep(). Default false; only EpubReaderActivity overrides.
   virtual bool hasUnsyncedProgress() const { return false; }
-  // Headless equivalent of a manual "Sync Progress": builds this activity's
-  // current position into a KOSync payload and uploads it, with no UI.
-  // Callers own bringing WiFi up first and tearing it down afterward (see
-  // SleepProgressSync.h) -- this assumes WiFi is already connected. Returns
-  // true only on a confirmed successful upload. Default no-op; only
-  // EpubReaderActivity overrides.
-  virtual bool syncProgressForSleep() { return false; }
+  // Headless equivalent of a manual "Sync Progress", split from the network
+  // half so main.cpp's enterDeepSleep() can call this *while the activity is
+  // still alive* -- ActivityManager::goToSleep() (called right after, to
+  // paint the sleep screen as early as possible) destroys this activity, so
+  // anything the upload needs must be captured first. Builds the current
+  // position into outProgress and persists it to disk; does not touch the
+  // network or WiFi. Returns true only when a payload was actually produced
+  // (nothing to send, or no credentials, leaves outProgress untouched).
+  // Default no-op; only EpubReaderActivity overrides.
+  virtual bool captureProgressForSleep(KOReaderProgress& outProgress) { return false; }
 #ifdef CP_TEST_CONSOLE
   // Test-console introspection (CMD:ACTIVITY): the cheapest possible
   // assertion that navigation landed where it should.

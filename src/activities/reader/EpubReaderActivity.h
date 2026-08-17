@@ -71,7 +71,7 @@ class EpubReaderActivity final : public ReaderActivity {
   // Position captured once loadBook() restores progress.bin (or resolves the
   // first-open text-reference redirect), used only to decide whether the
   // headless before-sleep sync (main.cpp's enterDeepSleep(), via
-  // syncProgressForSleep() below) has anything new to send. Deliberately
+  // captureProgressForSleep() below) has anything new to send. Deliberately
   // separate from lastSavedSpineIndex/lastSavedPage above: those throttle
   // progress.bin writes and intentionally re-fire once on the very first
   // render even with no real page turn, which would make every book open
@@ -141,5 +141,5 @@ class EpubReaderActivity final : public ReaderActivity {
   CrossPointPosition getCurrentPosition() const;
 
   bool hasUnsyncedProgress() const override;
-  bool syncProgressForSleep() override;
+  bool captureProgressForSleep(KOReaderProgress& outProgress) override;
 };

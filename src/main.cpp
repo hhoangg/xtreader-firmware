@@ -269,28 +269,28 @@ void enterDeepSleep(bool fromTimeout = false) {
   const bool wasReaderActivity = activityManager.isReaderActivity();
   APP_STATE.lastSleepFromReader = wasReaderActivity;
 
-  // Headless KOSync progress upload before goToSleep() below tears the
-  // reader down -- see src/sync/SleepProgressSync.h and
-  // SyncTriggerPolicy.h's shouldSyncBeforeSleep(). "paired" requires both
-  // the device pairing itself and a working KOSync credential: a pairing can
-  // succeed without provisioning progress-sync if the server doesn't
-  // support it. An unpaired device, or one with nothing new to send, takes
-  // neither branch below and sleeps exactly as it always has -- no delay,
-  // no extra screen.
+  // Capture whatever the headless KOSync progress upload needs *now*, while
+  // the reader activity is still alive -- goToSleep() below destroys it. See
+  // src/sync/SleepProgressSync.h and SyncTriggerPolicy.h's
+  // shouldSyncBeforeSleep(). "paired" requires both the device pairing
+  // itself and a working KOSync credential: a pairing can succeed without
+  // provisioning progress-sync if the server doesn't support it. An
+  // unpaired device, or one with nothing new to send, takes neither branch
+  // below and sleeps exactly as it always has -- no delay, no extra screen.
+  //
+  // The network attempt itself is deliberately deferred past goToSleep()
+  // below (see there): e-ink holds its image with no power, so there is no
+  // reason to make the owner wait at a "please wait" screen before the panel
+  // looks off -- the previous order did exactly that, and with no saved
+  // network in range it turned a single refresh into an ~11s stall (8s Wi-Fi
+  // budget + two full refreshes) that read as a hung device. Nothing is lost
+  // by capturing now and sending later: captureReaderProgressForSleep()
+  // already persists the position to disk before returning.
   const bool pairedForProgressSync = SYNC_STORE.isPaired() && KOREADER_STORE.hasEffectiveCredentials();
-  if (sync_trigger::shouldSyncBeforeSleep(pairedForProgressSync, wasReaderActivity,
-                                          activityManager.readerHasUnsyncedProgress())) {
-    // Blank-with-loading step (task brief): visible while the sync runs,
-    // replaced by the normal sleep screen a few lines below once it
-    // finishes. RenderLock is needed here (unlike HomeActivity's equivalent
-    // popup): this runs on the loop task, not the render task.
-    {
-      RenderLock lock;
-      renderer.clearScreen();
-      GUI.drawPopup(renderer, tr(STR_UPLOAD_PROGRESS));
-    }
-    sleep_progress_sync::trySyncBeforeSleep();
-  }
+  const bool wantsProgressSync = sync_trigger::shouldSyncBeforeSleep(pairedForProgressSync, wasReaderActivity,
+                                                                     activityManager.readerHasUnsyncedProgress());
+  KOReaderProgress capturedProgress;
+  const bool haveProgressToSync = wantsProgressSync && activityManager.captureReaderProgressForSleep(capturedProgress);
 
   const bool isQuickResumeSleep =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -305,6 +305,8 @@ void enterDeepSleep(bool fromTimeout = false) {
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
+  // Paints the sleep screen right now -- the device looks off from this
+  // point on, before anything below spends any time on Wi-Fi.
   activityManager.goToSleep(fromTimeout);
 
   if (isQuickResumeSleep) {
@@ -312,6 +314,15 @@ void enterDeepSleep(bool fromTimeout = false) {
   } else if (Storage.exists(SLEEP_FRAME_FILE)) {
     // A stale Quick Resume frame must not replace the selected sleep screen during wake.
     Storage.remove(SLEEP_FRAME_FILE);
+  }
+
+  // Only now, behind the already-painted sleep screen, attempt the network:
+  // bounded and backed off on repeated failure (see SleepProgressSync.h),
+  // and cancellable by a fresh power-button press (see
+  // SleepProgressSync.cpp's powerButtonPressedAgain()) so a slow or stuck
+  // attempt can never make the device feel unable to turn off.
+  if (haveProgressToSync) {
+    sleep_progress_sync::trySyncBeforeSleep(capturedProgress);
   }
 
   // Tear down WiFi so the modem power domain isn't held alive across deep sleep.
@@ -1442,10 +1453,11 @@ static void testConsolePair() {
 // CMD:SLEEPSYNC -- exercises enterDeepSleep()'s headless before-sleep KOSync
 // upload (src/sync/SleepProgressSync.h) without actually sleeping, so it can
 // be repeated from serial without a power cycle between attempts. Runs the
-// exact same decision (SyncTriggerPolicy.h's shouldSyncBeforeSleep()) and,
+// exact same decision (SyncTriggerPolicy.h's shouldSyncBeforeSleep()), the
+// exact same capture (ActivityManager::captureReaderProgressForSleep()), and
 // if it fires, the exact same sync call enterDeepSleep() makes -- see that
 // function in this file. Reports the decision inputs/outcome as one [TEST]
-// JSON line; SleepProgressSync.cpp's own heap-before/after [TEST] lines
+// JSON line; SleepProgressSync.cpp's own heap/stage-timing [TEST] lines
 // print in between when the sync actually runs. Redraws the current screen
 // afterward since, unlike the real path, nothing is about to replace it with
 // a sleep screen.
@@ -1460,8 +1472,49 @@ static void testConsoleSleepSync() {
       paired ? "true" : "false", isReader ? "true" : "false", dirty ? "true" : "false", shouldSync ? "true" : "false");
 
   if (shouldSync) {
-    const bool sent = sleep_progress_sync::trySyncBeforeSleep();
-    logSerial.printf("[TEST] {\"stage\":\"sleep_sync_result\",\"sent\":%s}\n", sent ? "true" : "false");
+    KOReaderProgress progress;
+    if (activityManager.captureReaderProgressForSleep(progress)) {
+      const bool sent = sleep_progress_sync::trySyncBeforeSleep(progress);
+      logSerial.printf("[TEST] {\"stage\":\"sleep_sync_result\",\"sent\":%s}\n", sent ? "true" : "false");
+    } else {
+      logSerial.println("[TEST] {\"stage\":\"sleep_sync_result\",\"sent\":false,\"reason\":\"capture_failed\"}");
+    }
+  }
+
+  activityManager.requestUpdate(true);
+}
+
+// CMD:SLEEPSYNCBENCH -- measures enterDeepSleep()'s before-sleep Wi-Fi search
+// against a deliberately unreachable network, standing in for "no Wi-Fi in
+// range" -- the failure mode that used to cost ~11s per power-off (task
+// brief) -- without the owner needing to disable their real router. Runs the
+// real production path end to end (decision, capture, back-off state
+// machine) but substitutes one nonexistent credential for
+// WifiCredentialStore's real saved list (see
+// SleepProgressSync.cpp's benchTrySyncAgainstBogusNetwork()), so it never
+// touches real Wi-Fi credentials and is safe to repeat from serial without a
+// power cycle. Per-stage elapsed-ms lines come from SleepProgressSync.cpp's
+// own [TEST] JSON (sleep_sync_backed_off / sleep_sync_wifi / sleep_sync_total);
+// this command only reports the decision and final outcome, same shape as
+// CMD:SLEEPSYNC above.
+static void testConsoleSleepSyncBench() {
+  const bool isReader = activityManager.isReaderActivity();
+  const bool paired = SYNC_STORE.isPaired() && KOREADER_STORE.hasEffectiveCredentials();
+  const bool dirty = activityManager.readerHasUnsyncedProgress();
+  const bool shouldSync = sync_trigger::shouldSyncBeforeSleep(paired, isReader, dirty);
+
+  logSerial.printf(
+      "[TEST] {\"stage\":\"sleep_sync_bench_decision\",\"paired\":%s,\"isReader\":%s,\"dirty\":%s,\"shouldSync\":%s}\n",
+      paired ? "true" : "false", isReader ? "true" : "false", dirty ? "true" : "false", shouldSync ? "true" : "false");
+
+  if (shouldSync) {
+    KOReaderProgress progress;
+    if (activityManager.captureReaderProgressForSleep(progress)) {
+      const bool sent = sleep_progress_sync::benchTrySyncAgainstBogusNetwork(progress);
+      logSerial.printf("[TEST] {\"stage\":\"sleep_sync_bench_result\",\"sent\":%s}\n", sent ? "true" : "false");
+    } else {
+      logSerial.println("[TEST] {\"stage\":\"sleep_sync_bench_result\",\"sent\":false,\"reason\":\"capture_failed\"}");
+    }
   }
 
   activityManager.requestUpdate(true);
@@ -1679,6 +1732,8 @@ void loop() {
         testConsolePair();
       } else if (cmd == "SLEEPSYNC") {
         testConsoleSleepSync();
+      } else if (cmd == "SLEEPSYNCBENCH") {
+        testConsoleSleepSyncBench();
       } else if (cmd == "SLEEP") {
         // Last known-good marker for the host to compare against once the device
         // wakes back up (or to inspect if it never does). Printed before the ack,

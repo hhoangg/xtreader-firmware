@@ -3,41 +3,69 @@
 // Headless "sync reading progress before the device powers off" -- the
 // device-only half of enterDeepSleep()'s (main.cpp) before-sleep sync.
 // lib/SyncManifest/SyncTriggerPolicy.h's shouldSyncBeforeSleep() is the pure
-// decision for *whether* to call this; this module is the *how*: bring WiFi
-// up from saved credentials (bounded), ask the current reader activity to
-// build and upload its progress, and log what it cost.
+// decision for *whether* to capture a payload at all; this module is the
+// *how* for the network half only: bring WiFi up from saved credentials
+// (bounded, and backed off after repeated failures -- see
+// lib/SyncManifest/SleepWifiBackoffPolicy.h), upload the payload the caller
+// already captured, and log what it cost. It does NOT read the reader
+// activity itself -- see Activity::captureProgressForSleep() /
+// ActivityManager::captureReaderProgressForSleep(), which main.cpp calls
+// *before* the reader activity is destroyed, well before this runs.
 //
 // Never called with anything to lose on failure: KOReaderSyncClient's own
 // heap gate and TLS timeout already bound the network half (see
-// KOReaderSyncClient.cpp), and a failed or skipped sync here just means this
-// session's progress goes up on a later occasion instead -- see this task's
-// report for why that is an acceptable trade against blocking a power-off
-// indefinitely.
+// KOReaderSyncClient.cpp), and a failed, skipped, or backed-off sync here
+// just means this session's progress goes up on a later occasion instead --
+// the position itself was already saved to disk by captureProgressForSleep()
+// regardless of what happens here.
+#include "KOReaderSyncClient.h"
+
 namespace sleep_progress_sync {
 
 // Upper bound on the WiFi bring-up attempted here (scanning + associating
-// with each saved network in turn). Chosen so a device held down to power
-// off is never kept waiting past what a user holding the button would
-// tolerate, even when every saved network has moved out of range: the
-// KOSync upload itself (KOReaderSyncClient::updateProgress()) adds at most
-// its own ~15s wolfSSL handshake deadline on top of this.
-constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 8000;
+// with each saved network in turn), *after* the sleep screen has already
+// painted (see main.cpp's enterDeepSleep()) -- the device already looks off
+// by the time this spends any of this budget. Cut hard from the 8s this used
+// to be: that number was chosen back when the popup+sleep-screen sequence
+// still made the owner wait for it, but pointed at nothing when no saved
+// network is in range, it stalled the panel-looks-off-to-actually-off gap by
+// the full 8s on every single power-off away from home. 2.5s is long enough
+// for one real AP association + DHCP lease (typically well under 1.5s on
+// this radio) and short enough that repeated failures do not compound into a
+// noticeable stall; see SleepWifiBackoffPolicy.h for what happens on repeat
+// failure, and SleepProgressSync.cpp's powerButtonPressedAgain() for the
+// escape hatch if even this is too long for a given moment. The KOSync
+// upload itself (KOReaderSyncClient::updateProgress()) adds its own ~15s
+// wolfSSL handshake deadline on top of this when WiFi does connect --
+// unchanged by this task, see its report for why.
+constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 2500;
 
-// Brings WiFi up (bounded by WIFI_CONNECT_TIMEOUT_MS) and, if that succeeds,
-// asks the current reader activity to build and upload its progress
-// (ActivityManager::syncReaderProgressForSleep()). Does NOT tear WiFi back
-// down -- enterDeepSleep() already does that unconditionally a few lines
-// later regardless of whether this ran.
+// Brings WiFi up (bounded by WIFI_CONNECT_TIMEOUT_MS, subject to
+// SleepWifiBackoffPolicy.h's back-off after repeated failures) and, if that
+// succeeds, uploads the already-captured progress payload. Does NOT tear
+// WiFi back down -- enterDeepSleep() already does that unconditionally a few
+// lines later regardless of whether this ran.
 //
-// Callers must gate on sync_trigger::shouldSyncBeforeSleep() first: this
-// function does not check pairing or dirtiness itself, only "is there a
-// reader activity to ask" (a defensive no-op guard, not the real gate).
+// Callers must gate on sync_trigger::shouldSyncBeforeSleep() and a
+// successful ActivityManager::captureReaderProgressForSleep() first: this
+// function does not re-check pairing or dirtiness itself.
 //
 // Returns true only once progress was actually confirmed sent. Logs free
 // heap and largest allocatable block before/after (as "[TEST]" JSON, gated
 // on CP_TEST_CONSOLE like every other on-device diagnostic in this
 // codebase) so the real worst-case memory cost is visible when built with
 // `pio run -e test`. Never logs a token or a sync key.
-bool trySyncBeforeSleep();
+bool trySyncBeforeSleep(const KOReaderProgress& progress);
+
+#ifdef CP_TEST_CONSOLE
+// CMD:SLEEPSYNCBENCH -- runs the exact same trySyncBeforeSleep() above, but
+// forces the Wi-Fi search to a deliberately unreachable network instead of
+// WifiCredentialStore's real saved list, so "no Wi-Fi in range" can be timed
+// on hardware without the owner disabling their actual router. Exercises
+// the real back-off state machine too. See main.cpp's
+// testConsoleSleepSyncBench() for the JSON this and trySyncBeforeSleep()'s
+// own [TEST] stage lines report.
+bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress);
+#endif
 
 }  // namespace sleep_progress_sync

@@ -873,12 +873,16 @@ bool EpubReaderActivity::hasUnsyncedProgress() const {
 // Headless sibling of launchKOReaderSync(): builds the exact same upload
 // payload performUpload() sends, but blocking and with no UI -- there is no
 // user present to resolve a remote/local conflict here, so this always
-// uploads local progress unconditionally rather than fetching and comparing
+// captures local progress unconditionally rather than fetching and comparing
 // remote state first (see this task's report for why "send what's on the
 // device" was chosen over "ask"). Called from main.cpp's enterDeepSleep() via
-// ActivityManager::syncReaderProgressForSleep(), which owns bringing WiFi up
-// first and never calls this without hasUnsyncedProgress() already true.
-bool EpubReaderActivity::syncProgressForSleep() {
+// ActivityManager::captureReaderProgressForSleep(), *before* goToSleep()
+// destroys this activity -- see this task's report for why the network
+// upload itself happens later, after the sleep screen has already painted,
+// and is no longer this method's job. Never touches WiFi or the network;
+// the epub is also left alone here (not released early) since goToSleep()
+// destroys this activity immediately after, which frees it anyway.
+bool EpubReaderActivity::captureProgressForSleep(KOReaderProgress& outProgress) {
   if (!epub || !hasUnsyncedProgress()) return false;
   if (!KOREADER_STORE.hasEffectiveCredentials()) return false;
 
@@ -931,24 +935,14 @@ bool EpubReaderActivity::syncProgressForSleep() {
     progress.metadata = std::move(meta);
   }
 
+  // Persisted unconditionally, before the caller decides whether it even
+  // attempts the network: nothing must be lost when the upload is skipped or
+  // fails -- the position stays on the device and goes up next opportunity.
   if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
-    LOG_ERR("KOSync", "Sleep sync: failed to save progress to disk, sending anyway");
+    LOG_ERR("KOSync", "Sleep sync: failed to save progress to disk, capturing payload anyway");
   }
 
-  LOG_DBG("KOSync", "Releasing epub for sleep sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
-  {
-    RenderLock lock;
-    ImageBlock::setExtractor(nullptr, nullptr);
-    section.reset();
-    epub.reset();
-  }
-  LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
-
-  const auto result = KOReaderSyncClient::updateProgress(progress);
-  if (result != KOReaderSyncClient::OK) {
-    LOG_ERR("KOSync", "Sleep sync failed: %s", KOReaderSyncClient::errorString(result));
-    return false;
-  }
+  outProgress = std::move(progress);
   return true;
 }
 

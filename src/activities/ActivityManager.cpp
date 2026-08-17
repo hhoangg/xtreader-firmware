@@ -311,9 +311,9 @@ bool ActivityManager::readerHasUnsyncedProgress() const {
   });
 }
 
-bool ActivityManager::syncReaderProgressForSleep() {
+bool ActivityManager::captureReaderProgressForSleep(KOReaderProgress& outProgress) {
   if (currentActivity && currentActivity->isReaderActivity()) {
-    return currentActivity->syncProgressForSleep();
+    return currentActivity->captureProgressForSleep(outProgress);
   }
   // Only reachable if the reader is paused behind e.g. its own menu; safe to
   // reach into it here because enterDeepSleep() always calls goToSleep()
@@ -321,7 +321,7 @@ bool ActivityManager::syncReaderProgressForSleep() {
   // replaceActivity()'s PendingAction::Replace handling in loop()) -- this
   // stacked reader is never resumed.
   for (const auto& activity : stackActivities) {
-    if (activity->isReaderActivity()) return activity->syncProgressForSleep();
+    if (activity->isReaderActivity()) return activity->captureProgressForSleep(outProgress);
   }
   return false;
 }

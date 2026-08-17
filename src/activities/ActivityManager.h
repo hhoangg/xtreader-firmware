@@ -14,8 +14,9 @@
 #include "MappedInputManager.h"
 #include "util/ScreenshotInfo.h"
 
-class Activity;    // forward declaration
-class RenderLock;  // forward declaration
+class Activity;           // forward declaration
+class RenderLock;         // forward declaration
+struct KOReaderProgress;  // forward declaration
 
 enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, OPDS_BROWSER, FILE_TRANSFER, SETTINGS_MENU };
 
@@ -106,10 +107,11 @@ class ActivityManager {
   // open reader menu) reader activity have progress that hasn't been synced
   // yet? See Activity::hasUnsyncedProgress().
   bool readerHasUnsyncedProgress() const;
-  // Headless progress upload for enterDeepSleep() (main.cpp) -- see
-  // Activity::syncProgressForSleep(). No-ops (returns false) if no reader
-  // activity is current or stacked.
-  bool syncReaderProgressForSleep();
+  // Headless progress capture for enterDeepSleep() (main.cpp) -- see
+  // Activity::captureProgressForSleep(). Must be called before goToSleep()
+  // tears the reader down. No-ops (returns false) if no reader activity is
+  // current or stacked.
+  bool captureReaderProgressForSleep(KOReaderProgress& outProgress);
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

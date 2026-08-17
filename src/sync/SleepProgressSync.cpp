@@ -1,15 +1,17 @@
 #include "SleepProgressSync.h"
 
 #include <Arduino.h>
+#include <HalGPIO.h>
 #include <Logging.h>
 #include <WiFi.h>
 
 #include <string>
 
+#include "CrossPointState.h"
+#include "KOReaderSyncClient.h"
+#include "SleepWifiBackoffPolicy.h"
 #include "Telemetry.h"
 #include "WifiCredentialStore.h"
-#include "activities/Activity.h"  // completes Activity before ActivityManager.h's inline ctor needs unique_ptr<Activity>
-#include "activities/ActivityManager.h"
 #include "activities/RenderLock.h"
 #include "util/TaskWatchdog.h"
 
@@ -19,13 +21,44 @@ namespace {
 
 // Per-network slice of WIFI_CONNECT_TIMEOUT_MS, so one dead saved network
 // cannot alone burn the whole budget and leave no time to try a second one.
-constexpr unsigned long PER_NETWORK_TIMEOUT_MS = 4000;
+constexpr unsigned long PER_NETWORK_TIMEOUT_MS = 1500;
+
+sleep_wifi_backoff::State loadBackoffState() {
+  return {APP_STATE.sleepWifiConsecutiveFailures, APP_STATE.sleepWifiSkipsRemaining};
+}
+
+// No-op (no SD write) when the state did not actually change, e.g. an
+// already-clean device that skipped straight past the backoff check.
+void saveBackoffState(const sleep_wifi_backoff::State& state) {
+  if (APP_STATE.sleepWifiConsecutiveFailures == state.consecutiveFailures &&
+      APP_STATE.sleepWifiSkipsRemaining == state.skipsRemaining) {
+    return;
+  }
+  APP_STATE.sleepWifiConsecutiveFailures = state.consecutiveFailures;
+  APP_STATE.sleepWifiSkipsRemaining = state.skipsRemaining;
+  APP_STATE.saveToFile();
+}
+
+// "Let the power button win" (task brief): a fresh press during the Wi-Fi
+// search is the owner's escape hatch if this ever takes longer than they are
+// willing to wait, regardless of budget/back-off tuning. gpio.update() is
+// safe to call repeatedly here -- this runs synchronously on the loop task
+// (enterDeepSleep() -> here), the same task that would otherwise be driving
+// MappedInputManager::update() -> gpio.update() every frame; nothing else
+// polls it concurrently while this loop blocks. wasPressed() is an edge, so
+// a button still held from the original power-off gesture does not
+// re-trigger this -- it takes an actual release-then-press.
+bool powerButtonPressedAgain() {
+  gpio.update();
+  return gpio.wasPressed(HalGPIO::BTN_POWER);
+}
 
 // Mirrors main.cpp's CP_TEST_CONSOLE-only testConsoleConnectWifi() (same
 // last-connected-SSID-first order, same per-network polling loop), but is
 // compiled into every build -- this is the one enterDeepSleep() actually
 // calls in production, not a test-console diagnostic.
-bool tryCredential(const std::string& ssid, const std::string& password, const unsigned long overallDeadlineMs) {
+bool tryCredential(const std::string& ssid, const std::string& password, const unsigned long overallDeadlineMs,
+                   bool& cancelled) {
   WiFi.disconnect();
   delay(50);
   if (!password.empty()) {
@@ -37,6 +70,10 @@ bool tryCredential(const std::string& ssid, const std::string& password, const u
   const unsigned long perNetworkDeadline = millis() + PER_NETWORK_TIMEOUT_MS;
   while (static_cast<long>(millis() - perNetworkDeadline) < 0 && static_cast<long>(millis() - overallDeadlineMs) < 0) {
     resetTaskWatchdogIfSubscribed();
+    if (powerButtonPressedAgain()) {
+      cancelled = true;
+      return false;
+    }
     const wl_status_t status = WiFi.status();
     if (status == WL_CONNECTED) return true;
     if (status == WL_CONNECT_FAILED || status == WL_NO_SSID_AVAIL) break;
@@ -45,8 +82,32 @@ bool tryCredential(const std::string& ssid, const std::string& password, const u
   return false;
 }
 
-bool connectToSavedWifi() {
+#ifdef CP_TEST_CONSOLE
+// Set by CMD:SLEEPSYNCBENCH before calling trySyncBeforeSleep(), so
+// connectToSavedWifi() below substitutes one deliberately nonexistent
+// credential for WifiCredentialStore's real saved list. Lets the exact
+// production path (including the back-off state machine) be timed on
+// hardware without the owner needing to disable their real router. Cleared
+// again immediately after. See main.cpp's testConsoleSleepSyncBench().
+bool benchForceBogusNetwork = false;
+constexpr char BENCH_BOGUS_SSID[] = "CP-BENCH-UNREACHABLE-NETWORK";
+#endif
+
+bool connectToSavedWifi(bool& cancelled) {
   if (WiFi.status() == WL_CONNECTED) return true;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.persistent(false);       // credentials are managed by WifiCredentialStore, not SDK NVS
+  WiFi.disconnect(true, true);  // abort any in-progress SDK auto-connect
+  delay(100);
+
+  const unsigned long overallDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
+
+#ifdef CP_TEST_CONSOLE
+  if (benchForceBogusNetwork) {
+    return tryCredential(BENCH_BOGUS_SSID, "", overallDeadline, cancelled);
+  }
+#endif
 
   {
     // SD card access shares SPI with the display; matches
@@ -61,27 +122,22 @@ bool connectToSavedWifi() {
     return false;
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.persistent(false);       // credentials are managed by WifiCredentialStore, not SDK NVS
-  WiFi.disconnect(true, true);  // abort any in-progress SDK auto-connect
-  delay(100);
-
-  const unsigned long overallDeadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
-
   const std::string lastSsid = WIFI_STORE.getLastConnectedSsid();
   bool triedLast = false;
   if (!lastSsid.empty()) {
     const auto cred = WIFI_STORE.findCredential(lastSsid);
     if (cred) {
       triedLast = true;
-      if (tryCredential(cred->ssid, cred->password, overallDeadline)) return true;
+      if (tryCredential(cred->ssid, cred->password, overallDeadline, cancelled)) return true;
+      if (cancelled) return false;
     }
   }
 
   for (size_t i = 0; i < savedCount && static_cast<long>(millis() - overallDeadline) < 0; i++) {
     const auto cred = WIFI_STORE.getCredentialAt(i);
     if (!cred || (triedLast && cred->ssid == lastSsid)) continue;
-    if (tryCredential(cred->ssid, cred->password, overallDeadline)) return true;
+    if (tryCredential(cred->ssid, cred->password, overallDeadline, cancelled)) return true;
+    if (cancelled) return false;
   }
 
   return false;
@@ -92,26 +148,75 @@ void logHeapJson(const char* when) {
   logSerial.printf("[TEST] {\"stage\":\"sleep_sync_heap\",\"when\":\"%s\",\"freeHeap\":%u,\"maxAllocHeap\":%u}\n", when,
                    static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
 }
+
+void logStageJson(const char* stage, unsigned long elapsedMs) {
+  logSerial.printf("[TEST] {\"stage\":\"%s\",\"elapsedMs\":%lu}\n", stage, elapsedMs);
+}
 #endif
 
 }  // namespace
 
-bool trySyncBeforeSleep() {
-  if (!activityManager.readerHasUnsyncedProgress()) return false;
-
+bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 #ifdef CP_TEST_CONSOLE
   logHeapJson("start");
+  const unsigned long overallStart = millis();
 #endif
 
-  if (!connectToSavedWifi()) {
+  const sleep_wifi_backoff::State backoffState = loadBackoffState();
+  if (!sleep_wifi_backoff::shouldAttempt(backoffState)) {
+    LOG_DBG("SLPSYNC",
+            "Skipping before-sleep Wi-Fi attempt: backed off (%u skip(s) left after %u consecutive failure(s))",
+            backoffState.skipsRemaining, backoffState.consecutiveFailures);
+    saveBackoffState(sleep_wifi_backoff::afterSkippedAttempt(backoffState));
+#ifdef CP_TEST_CONSOLE
+    logStageJson("sleep_sync_backed_off", millis() - overallStart);
+#endif
+    return false;
+  }
+
+#ifdef CP_TEST_CONSOLE
+  const unsigned long wifiStart = millis();
+#endif
+  bool cancelled = false;
+  const bool wifiConnected = connectToSavedWifi(cancelled);
+#ifdef CP_TEST_CONSOLE
+  logStageJson("sleep_sync_wifi", millis() - wifiStart);
+#endif
+
+  if (cancelled) {
+    // Power button wins: not evidence of "no Wi-Fi here", just an owner who
+    // wants the device off now -- leave the back-off state untouched.
+    LOG_DBG("SLPSYNC", "Before-sleep Wi-Fi attempt cancelled by power button");
+    return false;
+  }
+
+  if (!wifiConnected) {
     LOG_DBG("SLPSYNC", "No WiFi for before-sleep sync; progress goes up another time");
+    saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, false));
 #ifdef CP_TEST_CONSOLE
     logHeapJson("no_wifi");
 #endif
     return false;
   }
 
-  const bool sent = activityManager.syncReaderProgressForSleep();
+  saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, true));
+
+  if (powerButtonPressedAgain()) {
+    LOG_DBG("SLPSYNC", "Before-sleep sync cancelled by power button after Wi-Fi connected; skipping upload");
+    return false;
+  }
+
+#ifdef CP_TEST_CONSOLE
+  const unsigned long uploadStart = millis();
+#endif
+  const auto result = KOReaderSyncClient::updateProgress(progress);
+  const bool sent = (result == KOReaderSyncClient::OK);
+  if (!sent) {
+    LOG_ERR("KOSync", "Sleep sync failed: %s", KOReaderSyncClient::errorString(result));
+  }
+#ifdef CP_TEST_CONSOLE
+  logStageJson("sleep_sync_upload", millis() - uploadStart);
+#endif
   LOG_DBG("SLPSYNC", "Before-sleep sync %s", sent ? "sent" : "failed");
 
   // WiFi is already up here for the progress upload above -- the other of
@@ -131,9 +236,19 @@ bool trySyncBeforeSleep() {
 
 #ifdef CP_TEST_CONSOLE
   logHeapJson("done");
+  logStageJson("sleep_sync_total", millis() - overallStart);
 #endif
 
   return sent;
 }
+
+#ifdef CP_TEST_CONSOLE
+bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress) {
+  benchForceBogusNetwork = true;
+  const bool sent = trySyncBeforeSleep(progress);
+  benchForceBogusNetwork = false;
+  return sent;
+}
+#endif
 
 }  // namespace sleep_progress_sync
