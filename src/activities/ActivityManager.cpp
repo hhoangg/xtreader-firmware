@@ -302,6 +302,30 @@ bool ActivityManager::isReaderActivity() const {
          (currentActivity && currentActivity->isReaderActivity());
 }
 
+bool ActivityManager::readerHasUnsyncedProgress() const {
+  if (currentActivity && currentActivity->isReaderActivity() && currentActivity->hasUnsyncedProgress()) {
+    return true;
+  }
+  return std::any_of(stackActivities.begin(), stackActivities.end(), [](const auto& activity) {
+    return activity->isReaderActivity() && activity->hasUnsyncedProgress();
+  });
+}
+
+bool ActivityManager::syncReaderProgressForSleep() {
+  if (currentActivity && currentActivity->isReaderActivity()) {
+    return currentActivity->syncProgressForSleep();
+  }
+  // Only reachable if the reader is paused behind e.g. its own menu; safe to
+  // reach into it here because enterDeepSleep() always calls goToSleep()
+  // immediately after, which drops the entire activity stack (see
+  // replaceActivity()'s PendingAction::Replace handling in loop()) -- this
+  // stacked reader is never resumed.
+  for (const auto& activity : stackActivities) {
+    if (activity->isReaderActivity()) return activity->syncProgressForSleep();
+  }
+  return false;
+}
+
 bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }
 
 bool ActivityManager::skipLoopDelay() const { return currentActivity && currentActivity->skipLoopDelay(); }

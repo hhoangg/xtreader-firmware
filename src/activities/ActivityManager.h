@@ -102,6 +102,14 @@ class ActivityManager {
 
   bool preventAutoSleep() const;
   bool isReaderActivity() const;
+  // Cheap, no-network check: does the current (or stacked, e.g. behind an
+  // open reader menu) reader activity have progress that hasn't been synced
+  // yet? See Activity::hasUnsyncedProgress().
+  bool readerHasUnsyncedProgress() const;
+  // Headless progress upload for enterDeepSleep() (main.cpp) -- see
+  // Activity::syncProgressForSleep(). No-ops (returns false) if no reader
+  // activity is current or stacked.
+  bool syncReaderProgressForSleep();
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

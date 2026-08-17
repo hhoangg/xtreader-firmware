@@ -16,6 +16,7 @@
 #include <I18n.h>
 #include <Logging.h>
 #include <SPI.h>
+#include <SyncTriggerPolicy.h>
 #include <WiFi.h>
 #include <XteinkDetect.h>
 #include <builtinFonts/all.h>
@@ -47,6 +48,7 @@
 #include "sync/BookDownloader.h"
 #include "sync/BookServerDelete.h"
 #include "sync/DownloadQueue.h"
+#include "sync/SleepProgressSync.h"
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
 #include "util/ButtonNavigator.h"
@@ -263,7 +265,31 @@ static bool loadSleepFrameBuffer() {
 // Enter deep sleep mode
 void enterDeepSleep(bool fromTimeout = false) {
   HalPowerManager::Lock powerLock;  // Ensure we are at normal CPU frequency for sleep preparation
-  APP_STATE.lastSleepFromReader = activityManager.isReaderActivity();
+  const bool wasReaderActivity = activityManager.isReaderActivity();
+  APP_STATE.lastSleepFromReader = wasReaderActivity;
+
+  // Headless KOSync progress upload before goToSleep() below tears the
+  // reader down -- see src/sync/SleepProgressSync.h and
+  // SyncTriggerPolicy.h's shouldSyncBeforeSleep(). "paired" requires both
+  // the device pairing itself and a working KOSync credential: a pairing can
+  // succeed without provisioning progress-sync if the server doesn't
+  // support it. An unpaired device, or one with nothing new to send, takes
+  // neither branch below and sleeps exactly as it always has -- no delay,
+  // no extra screen.
+  const bool pairedForProgressSync = SYNC_STORE.isPaired() && KOREADER_STORE.hasEffectiveCredentials();
+  if (sync_trigger::shouldSyncBeforeSleep(pairedForProgressSync, wasReaderActivity,
+                                          activityManager.readerHasUnsyncedProgress())) {
+    // Blank-with-loading step (task brief): visible while the sync runs,
+    // replaced by the normal sleep screen a few lines below once it
+    // finishes. RenderLock is needed here (unlike HomeActivity's equivalent
+    // popup): this runs on the loop task, not the render task.
+    {
+      RenderLock lock;
+      renderer.clearScreen();
+      GUI.drawPopup(renderer, tr(STR_UPLOAD_PROGRESS));
+    }
+    sleep_progress_sync::trySyncBeforeSleep();
+  }
 
   const bool isQuickResumeSleep =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -1434,6 +1460,34 @@ static void testConsolePair() {
   resultLine += "}";
   logSerial.println(resultLine);
 }
+
+// CMD:SLEEPSYNC -- exercises enterDeepSleep()'s headless before-sleep KOSync
+// upload (src/sync/SleepProgressSync.h) without actually sleeping, so it can
+// be repeated from serial without a power cycle between attempts. Runs the
+// exact same decision (SyncTriggerPolicy.h's shouldSyncBeforeSleep()) and,
+// if it fires, the exact same sync call enterDeepSleep() makes -- see that
+// function in this file. Reports the decision inputs/outcome as one [TEST]
+// JSON line; SleepProgressSync.cpp's own heap-before/after [TEST] lines
+// print in between when the sync actually runs. Redraws the current screen
+// afterward since, unlike the real path, nothing is about to replace it with
+// a sleep screen.
+static void testConsoleSleepSync() {
+  const bool isReader = activityManager.isReaderActivity();
+  const bool paired = SYNC_STORE.isPaired() && KOREADER_STORE.hasEffectiveCredentials();
+  const bool dirty = activityManager.readerHasUnsyncedProgress();
+  const bool shouldSync = sync_trigger::shouldSyncBeforeSleep(paired, isReader, dirty);
+
+  logSerial.printf(
+      "[TEST] {\"stage\":\"sleep_sync_decision\",\"paired\":%s,\"isReader\":%s,\"dirty\":%s,\"shouldSync\":%s}\n",
+      paired ? "true" : "false", isReader ? "true" : "false", dirty ? "true" : "false", shouldSync ? "true" : "false");
+
+  if (shouldSync) {
+    const bool sent = sleep_progress_sync::trySyncBeforeSleep();
+    logSerial.printf("[TEST] {\"stage\":\"sleep_sync_result\",\"sent\":%s}\n", sent ? "true" : "false");
+  }
+
+  activityManager.requestUpdate(true);
+}
 #endif
 
 void loop() {
@@ -1645,6 +1699,8 @@ void loop() {
         testConsoleUnlink();
       } else if (cmd == "PAIR") {
         testConsolePair();
+      } else if (cmd == "SLEEPSYNC") {
+        testConsoleSleepSync();
       } else if (cmd == "SLEEP") {
         // Last known-good marker for the host to compare against once the device
         // wakes back up (or to inspect if it never does). Printed before the ack,

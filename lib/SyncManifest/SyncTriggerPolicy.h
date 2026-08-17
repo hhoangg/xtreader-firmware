@@ -41,4 +41,27 @@ bool shouldAutoSync(bool paired, bool wifiConnected, bool alreadyAttemptedThisBo
 // each one a blocking network call on the render task.
 bool shouldDeliverPendingBookFinished(bool hasPending, bool paired, bool wifiConnected, bool alreadyAttemptedThisVisit);
 
+// Pure decision for "should enterDeepSleep() run the headless before-sleep
+// KOSync progress upload?" (src/sync/SleepProgressSync.h). Unlike the two
+// functions above, this one deliberately brings WiFi up itself if the other
+// two conditions hold -- there is no "come back on a later library visit"
+// for a device about to lose power, so paying the WiFi-search cost here
+// (bounded, see SleepProgressSync.h's timeout) is the only chance this
+// session's progress gets sent at all.
+//  - paired: the device has a working KOSync credential to send to --
+//    SyncCredentialStore::isPaired() AND KOReaderCredentialStore's
+//    hasEffectiveCredentials() (a pairing can succeed without provisioning
+//    progress-sync if the server doesn't support it). A manually-configured,
+//    never-paired KOSync account is deliberately excluded: the task this
+//    encodes is "pair once and never think about it again", not "sync every
+//    KOSync user automatically" -- see this task's report.
+//  - isReaderActivity: activityManager.isReaderActivity() at the top of
+//    enterDeepSleep(), before goToSleep() tears the reader down. With no
+//    book open there is no position to build a payload from.
+//  - dirty: EpubReaderActivity::hasUnsyncedProgress() -- the reader's
+//    position has moved since this book was opened. Without this, opening a
+//    book and immediately powering off (nothing new to report) would still
+//    pay the WiFi+TLS cost for no reason.
+bool shouldSyncBeforeSleep(bool paired, bool isReaderActivity, bool dirty);
+
 }  // namespace sync_trigger

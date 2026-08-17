@@ -27,6 +27,7 @@
 #include "EpubReaderPercentSelectionActivity.h"
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
+#include "KOReaderDocumentId.h"
 #include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
 #include "ProgressMapper.h"
@@ -223,6 +224,13 @@ bool EpubReaderActivity::loadBook() {
   }
 
   loadCachedBookmarks();
+
+  // Baseline for hasUnsyncedProgress() -- see its header comment. Captured
+  // after the text-reference redirect above so a fresh book's initial jump
+  // does not itself count as "unsynced".
+  syncBaselineSpineIndex = currentSpineIndex;
+  syncBaselinePage = nextPageNumber;
+
   return true;
 }
 
@@ -853,6 +861,94 @@ bool EpubReaderActivity::launchKOReaderSync() {
   activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
       renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
       std::move(localChapterName), paragraphIndex));
+  return true;
+}
+
+bool EpubReaderActivity::hasUnsyncedProgress() const {
+  if (!epub) return false;
+  const int currentPage = section ? section->currentPage : nextPageNumber;
+  return currentSpineIndex != syncBaselineSpineIndex || currentPage != syncBaselinePage;
+}
+
+// Headless sibling of launchKOReaderSync(): builds the exact same upload
+// payload performUpload() sends, but blocking and with no UI -- there is no
+// user present to resolve a remote/local conflict here, so this always
+// uploads local progress unconditionally rather than fetching and comparing
+// remote state first (see this task's report for why "send what's on the
+// device" was chosen over "ask"). Called from main.cpp's enterDeepSleep() via
+// ActivityManager::syncReaderProgressForSleep(), which owns bringing WiFi up
+// first and never calls this without hasUnsyncedProgress() already true.
+bool EpubReaderActivity::syncProgressForSleep() {
+  if (!epub || !hasUnsyncedProgress()) return false;
+  if (!KOREADER_STORE.hasEffectiveCredentials()) return false;
+
+  const int currentPage = section ? section->currentPage : nextPageNumber;
+  const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
+  std::optional<uint16_t> paragraphIndex;
+  if (section && currentPage >= 0 && currentPage < section->pageCount) {
+    const uint16_t paragraphPage =
+        currentPage > 0 ? static_cast<uint16_t>(currentPage - 1) : static_cast<uint16_t>(currentPage);
+    if (const auto pIdx = section->getParagraphIndexForPage(paragraphPage)) {
+      paragraphIndex = *pIdx;
+    }
+  }
+
+  const CrossPointPosition localPos = getCurrentPosition();
+  const SavedProgressPosition localKoPos = ProgressMapper::toSavedProgress(epub, localPos);
+
+  const std::string documentHash = KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::FILENAME
+                                       ? KOReaderDocumentId::calculateFromFilename(epub->getPath())
+                                       : KOReaderDocumentId::calculate(epub->getPath());
+  if (documentHash.empty()) {
+    LOG_ERR("KOSync", "Sleep sync: failed to hash document, skipping");
+    return false;
+  }
+
+  KOReaderProgress progress;
+  progress.document = documentHash;
+  progress.progress = localKoPos.xpath;
+  progress.percentage = localKoPos.percentage;
+
+  if (KOREADER_STORE.effectiveUsesCrossPointSyncServer()) {
+    KOReaderRichPosition pos;
+    const float pct = localKoPos.percentage < 0.0f ? 0.0f : localKoPos.percentage > 1.0f ? 1.0f : localKoPos.percentage;
+    pos.pctQ = static_cast<uint32_t>(pct * 1000000.0f + 0.5f);
+    pos.spineIndex = static_cast<uint16_t>(currentSpineIndex);
+    pos.pageNumber = static_cast<uint16_t>(currentPage);
+    pos.totalPages = static_cast<uint16_t>(totalPages > 0 ? totalPages : 1);
+    pos.paragraphIndex = paragraphIndex;
+    pos.xpath = localKoPos.xpath;
+    progress.position = std::move(pos);
+  }
+
+  if (KOREADER_STORE.getSendMetadata()) {
+    KOReaderMetadata meta;
+    const std::string& path = epub->getPath();
+    const auto lastSlash = path.rfind('/');
+    meta.filename = (lastSlash != std::string::npos) ? path.substr(lastSlash + 1) : path;
+    meta.title = epub->getTitle();
+    meta.authors = epub->getAuthor();
+    progress.metadata = std::move(meta);
+  }
+
+  if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
+    LOG_ERR("KOSync", "Sleep sync: failed to save progress to disk, sending anyway");
+  }
+
+  LOG_DBG("KOSync", "Releasing epub for sleep sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
+  {
+    RenderLock lock;
+    ImageBlock::setExtractor(nullptr, nullptr);
+    section.reset();
+    epub.reset();
+  }
+  LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
+
+  const auto result = KOReaderSyncClient::updateProgress(progress);
+  if (result != KOReaderSyncClient::OK) {
+    LOG_ERR("KOSync", "Sleep sync failed: %s", KOReaderSyncClient::errorString(result));
+    return false;
+  }
   return true;
 }
 

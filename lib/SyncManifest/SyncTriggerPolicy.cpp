@@ -11,4 +11,8 @@ bool shouldDeliverPendingBookFinished(const bool hasPending, const bool paired, 
   return hasPending && paired && wifiConnected && !alreadyAttemptedThisVisit;
 }
 
+bool shouldSyncBeforeSleep(const bool paired, const bool isReaderActivity, const bool dirty) {
+  return paired && isReaderActivity && dirty;
+}
+
 }  // namespace sync_trigger

@@ -53,6 +53,19 @@ class Activity {
   virtual bool isHomeActivity() const { return false; }
   virtual bool handleHomeGesture() { return false; }
   virtual ScreenshotInfo getScreenshotInfo() const { return {}; }
+  // True when this activity has reading progress that has not been sent to a
+  // sync server yet. Used only to decide whether enterDeepSleep() (main.cpp)
+  // should run its headless before-sleep KOSync upload -- see
+  // src/sync/SleepProgressSync.h and lib/SyncManifest/SyncTriggerPolicy.h's
+  // shouldSyncBeforeSleep(). Default false; only EpubReaderActivity overrides.
+  virtual bool hasUnsyncedProgress() const { return false; }
+  // Headless equivalent of a manual "Sync Progress": builds this activity's
+  // current position into a KOSync payload and uploads it, with no UI.
+  // Callers own bringing WiFi up first and tearing it down afterward (see
+  // SleepProgressSync.h) -- this assumes WiFi is already connected. Returns
+  // true only on a confirmed successful upload. Default no-op; only
+  // EpubReaderActivity overrides.
+  virtual bool syncProgressForSleep() { return false; }
 #ifdef CP_TEST_CONSOLE
   // Test-console introspection (CMD:ACTIVITY): the cheapest possible
   // assertion that navigation landed where it should.

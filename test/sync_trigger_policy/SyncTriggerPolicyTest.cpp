@@ -6,14 +6,13 @@ namespace {
 
 using sync_trigger::shouldAutoSync;
 using sync_trigger::shouldDeliverPendingBookFinished;
+using sync_trigger::shouldSyncBeforeSleep;
 
 TEST(SyncTriggerPolicy, FiresWhenPairedConnectedAndNotYetAttempted) {
   EXPECT_TRUE(shouldAutoSync(/*paired=*/true, /*wifiConnected=*/true, /*alreadyAttemptedThisBoot=*/false));
 }
 
-TEST(SyncTriggerPolicy, NeverFiresWhenUnpaired) {
-  EXPECT_FALSE(shouldAutoSync(false, true, false));
-}
+TEST(SyncTriggerPolicy, NeverFiresWhenUnpaired) { EXPECT_FALSE(shouldAutoSync(false, true, false)); }
 
 TEST(SyncTriggerPolicy, NeverBringsWifiUpItself) {
   // paired and never attempted, but WiFi is not already connected -- must
@@ -53,6 +52,26 @@ TEST(DeliverPendingBookFinished, AtMostOncePerVisitEvenWithSomethingStillPending
   // visit -- see the header comment on why (repeated blocking network calls
   // on every render pass while the user sits on Home).
   EXPECT_FALSE(shouldDeliverPendingBookFinished(true, true, true, /*alreadyAttemptedThisVisit=*/true));
+}
+
+TEST(SyncBeforeSleep, FiresWhenPairedInReaderAndDirty) {
+  EXPECT_TRUE(shouldSyncBeforeSleep(/*paired=*/true, /*isReaderActivity=*/true, /*dirty=*/true));
+}
+
+TEST(SyncBeforeSleep, NeverFiresWhenUnpaired) {
+  // An unpaired device must sleep exactly as it does today: no delay, no screen.
+  EXPECT_FALSE(shouldSyncBeforeSleep(false, true, true));
+}
+
+TEST(SyncBeforeSleep, NeverFiresOutsideTheReader) { EXPECT_FALSE(shouldSyncBeforeSleep(true, false, true)); }
+
+TEST(SyncBeforeSleep, NeverFiresWhenClean) {
+  // Book open, nothing read yet -- nothing new to send, so no WiFi/TLS cost.
+  EXPECT_FALSE(shouldSyncBeforeSleep(true, true, /*dirty=*/false));
+}
+
+TEST(SyncBeforeSleep, UnpairedOutsideReaderAndCleanStillFalse) {
+  EXPECT_FALSE(shouldSyncBeforeSleep(false, false, false));
 }
 
 }  // namespace
