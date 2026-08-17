@@ -1,2 +1,0 @@
-[      54ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5183/node_modules/.vite/deps/react-dom_client.js?v=6aafbc9f:14333
-[   25853ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:5183/api/library/upload?path=%2FTest+Drop+Upload.epub&contentHash=dd5806c636ceb12484b1a22ea9e20a2dcadd7576fc30bd423ab8a527b70658c3:0

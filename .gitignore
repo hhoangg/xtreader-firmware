@@ -31,3 +31,6 @@ lib/EpdFont/scripts/output/
 /sdkconfig.*
 sdkconfig.sticky
 flake.*
+
+# Playwright MCP debug artifacts (console logs, page snapshots)
+.playwright-mcp/
