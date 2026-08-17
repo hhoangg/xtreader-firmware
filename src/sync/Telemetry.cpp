@@ -24,12 +24,17 @@ TelemetryResult post(const std::string& path, const std::string& body) {
   // outStatus is left at its initial -1 only on a connect/TLS/DNS failure
   // that never got an HTTP response at all (see postJson's doc comment) --
   // check that first, since a real status code always takes precedence.
+  // Any 2xx counts. These endpoints answer 201 when they create something --
+  // request-books does exactly that -- and treating that as a failure told the
+  // reader their request had not been sent when the server had already
+  // recorded it, which invites them to press the button again.
+  const bool accepted = result.httpStatus >= 200 && result.httpStatus < 300;
   if (result.httpStatus < 0) {
     result.error = "transport";
-  } else if (result.httpStatus != 200) {
+  } else if (!accepted) {
     result.error = "http_status";
   } else if (!ok) {
-    result.error = "incomplete";  // got a 200 but the body read didn't complete
+    result.error = "incomplete";  // accepted, but the body read didn't complete
   } else {
     result.ok = true;
   }
