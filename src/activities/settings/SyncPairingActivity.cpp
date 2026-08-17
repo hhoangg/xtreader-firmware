@@ -231,6 +231,12 @@ void SyncPairingActivity::onPaired(const DeviceTokenResponse& token) {
     // the synced position. It also matches real KOReader's own default, so a
     // KOReader app sharing this account needs no matching change either.
     KOREADER_STORE.setMatchMethod(DocumentMatchMethod::BINARY);
+    // Sync without asking. The reader this is built for cannot answer a
+    // question about sync conflicts and did not choose to have an account in
+    // the first place; leaving this on ASK_EVERY_TIME turns "pair once and
+    // forget" into a prompt on every book. A device that had been set to ask
+    // was set that way for a server it is no longer talking to.
+    KOREADER_STORE.setSyncBehavior(KOReaderSyncBehavior::SMART);
     KOREADER_STORE.saveToFile();
   }
 

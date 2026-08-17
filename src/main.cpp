@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <BoardConfig.h>
 #include <Epub.h>
 #include <FontCacheManager.h>
@@ -27,6 +28,8 @@
 
 #include "CrossPointSettings.h"
 #include "CrossPointState.h"
+#include "DevicePairingPoller.h"
+#include "DevicePairingProtocol.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
@@ -48,6 +51,7 @@
 #include "sync/Telemetry.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+#include "util/TaskWatchdog.h"
 
 GfxRenderer renderer(display);
 MappedInputManager mappedInputManager(gpio, renderer);
@@ -1224,6 +1228,212 @@ static void testConsoleServerDelete(const std::string& id) {
                    wifiConnected ? "true" : "false", result.ok ? "true" : "false", result.httpStatus,
                    result.error.c_str());
 }
+
+// CMD:UNLINK -- exactly what SyncSettingsActivity's "Unlink Device" row does
+// (SyncSettingsActivity::unlinkDevice()): forgets the pairing
+// (SyncCredentialStore::clearPairing()) and, since a provisioned progress-sync
+// credential is only valid for that pairing, the provisioned KOSync
+// credential too (KOReaderCredentialStore::clearProvisionedCredential()). No
+// network call and no SD access -- both stores are NVS-only, so this needs no
+// RenderLock. Reports before/after state so the harness can confirm
+// something was actually cleared, not just that the command ran.
+static void testConsoleUnlink() {
+  const bool wasPaired = SYNC_STORE.isPaired();
+  const bool hadProgressSync = KOREADER_STORE.hasProvisionedCredential();
+
+  SYNC_STORE.clearPairing();
+  KOREADER_STORE.clearProvisionedCredential();
+
+  logSerial.printf(
+      "[TEST] {\"wasPaired\":%s,\"pairingCleared\":%s,\"hadProgressSync\":%s,\"progressSyncCleared\":%s}\n",
+      wasPaired ? "true" : "false", (!SYNC_STORE.isPaired()) ? "true" : "false", hadProgressSync ? "true" : "false",
+      (!KOREADER_STORE.hasProvisionedCredential()) ? "true" : "false");
+}
+
+// Hard ceiling on how long CMD:PAIR blocks the console waiting for a human to
+// scan/enter the code and approve in a browser. The server's own expiresIn
+// grant (300s default, see DevicePairingPoller.h) is longer than any one test
+// run should tie up the serial line for -- 2 minutes is plenty for a human
+// already standing at the keyboard, and short enough that a forgotten
+// CMD:PAIR cannot wedge a device test session indefinitely.
+constexpr unsigned long TEST_PAIR_MAX_WAIT_MS = 120000;
+// How often to re-check the bound/poller state while waiting between polls --
+// frequent enough that TEST_PAIR_MAX_WAIT_MS is honored to a fraction of a
+// second and the watchdog is reset well inside the 5s TWDT timeout, coarse
+// enough not to busy-spin the loop task.
+constexpr unsigned long TEST_PAIR_POLL_CHECK_MS = 100;
+
+// CMD:PAIR -- runs the RFC 8628 device-authorization flow headlessly through
+// the exact modules SyncPairingActivity drives: DevicePairingPoller and the
+// parseDeviceCodeResponse/parseDeviceTokenSuccess/parseDeviceTokenPollError
+// parsers from lib/DevicePairing, and the same POST /device/code and
+// POST /device/token calls SyncPairingActivity::requestCode()/pollNow() make.
+// Brings WiFi up first. Prints one [TEST] line with the userCode and
+// verification URI as soon as the code is issued (stage "code") so a human
+// can approve it in a browser, then blocks polling at the server's own
+// interval -- backing off on slow_down via the same DevicePairingPoller the
+// real screen uses -- until approved, denied, expired, or
+// TEST_PAIR_MAX_WAIT_MS elapses, then prints a second [TEST] line with the
+// outcome (stage "result"). On approval, persists exactly what
+// SyncPairingActivity::onPaired() persists: SyncCredentialStore::setPairing()
+// and, if the response provisioned one, KOReaderCredentialStore::
+// setProvisionedCredential() plus the BINARY match method.
+//
+// Never prints deviceCode or accessToken: deviceCode redeems the code before
+// a human approves it, and accessToken is a never-expiring bearer token --
+// both are secrets that would otherwise land in pasted console logs. The
+// provisioned progress-sync key is reported only as a boolean (provisioned or
+// not), never printed. userCode is meant to be displayed/photographed and is
+// safe to print as-is.
+static void testConsolePair() {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+  if (!wifiConnected) {
+    logSerial.printf("[TEST] {\"stage\":\"wifi\",\"ok\":false,\"error\":\"%s\"}\n", wifiError.c_str());
+    return;
+  }
+
+  JsonDocument codeReqDoc;
+  codeReqDoc["deviceLabel"] = BoardConfig::ACTIVE.name;
+  std::string codeReqBody;
+  serializeJson(codeReqDoc, codeReqBody);
+
+  const std::string codeUrl = SYNC_STORE.getBaseUrl() + "/device/code";
+  std::string codeResponse;
+  int codeStatus = -1;
+  const bool codePostOk = HttpDownloader::postJson(codeUrl, codeReqBody, codeResponse, &codeStatus);
+
+  DeviceCodeResponse code;
+  if (!codePostOk || codeStatus != 201 || !parseDeviceCodeResponse(codeResponse.c_str(), codeResponse.size(), code)) {
+    logSerial.printf("[TEST] {\"stage\":\"requestCode\",\"ok\":false,\"httpStatus\":%d}\n", codeStatus);
+    return;
+  }
+
+  String codeLine = "[TEST] {\"stage\":\"code\",\"userCode\":";
+  appendJsonEscaped(codeLine, code.userCode, strlen(code.userCode));
+  codeLine += ",\"verificationUri\":";
+  appendJsonEscaped(codeLine, code.verificationUriComplete, strlen(code.verificationUriComplete));
+  codeLine += ",\"expiresIn\":";
+  codeLine += String(static_cast<unsigned>(code.expiresIn));
+  codeLine += ",\"interval\":";
+  codeLine += String(static_cast<unsigned>(code.interval));
+  codeLine += "}";
+  logSerial.println(codeLine);
+
+  DevicePairingPoller poller;
+  const unsigned long startMs = millis();
+  poller.start(startMs, code.interval, code.expiresIn);
+
+  const std::string tokenUrl = SYNC_STORE.getBaseUrl() + "/device/token";
+  const char* outcome = "timeout";
+  DeviceTokenResponse token;
+  bool resolved = false;
+
+  while (!resolved) {
+    resetTaskWatchdogIfSubscribed();
+    const unsigned long now = millis();
+    if (static_cast<long>(now - startMs) >= static_cast<long>(TEST_PAIR_MAX_WAIT_MS)) {
+      outcome = "timeout";
+      break;
+    }
+
+    const bool due = poller.dueForPoll(now);
+    if (due) {
+      JsonDocument pollDoc;
+      pollDoc["deviceCode"] = code.deviceCode;
+      std::string pollBody;
+      serializeJson(pollDoc, pollBody);
+
+      std::string pollResponse;
+      int pollStatus = -1;
+      const bool pollOk = HttpDownloader::postJson(tokenUrl, pollBody, pollResponse, &pollStatus);
+
+      if (pollOk && pollStatus == 200) {
+        if (parseDeviceTokenSuccess(pollResponse.c_str(), pollResponse.size(), token)) {
+          outcome = "approved";
+          resolved = true;
+        } else {
+          outcome = "parse_error";
+          resolved = true;
+        }
+      } else if (pollOk && pollStatus == 400) {
+        const DeviceTokenPollError error = parseDeviceTokenPollError(pollResponse.c_str(), pollResponse.size());
+        DevicePairingPollOutcome pollOutcome;
+        switch (error) {
+          case DeviceTokenPollError::SLOW_DOWN:
+            pollOutcome = DevicePairingPollOutcome::SLOW_DOWN;
+            break;
+          case DeviceTokenPollError::ACCESS_DENIED:
+            pollOutcome = DevicePairingPollOutcome::ACCESS_DENIED;
+            break;
+          case DeviceTokenPollError::EXPIRED_TOKEN:
+            pollOutcome = DevicePairingPollOutcome::EXPIRED_TOKEN;
+            break;
+          case DeviceTokenPollError::AUTHORIZATION_PENDING:
+          case DeviceTokenPollError::NONE:
+          default:
+            pollOutcome = DevicePairingPollOutcome::AUTHORIZATION_PENDING;
+            break;
+        }
+        poller.onPollResult(millis(), pollOutcome);
+      } else {
+        // Transport/server hiccup mid-poll: treat as a retry, not a hard
+        // failure, matching SyncPairingActivity::pollNow() -- a single flaky
+        // request should not abort the whole flow before TEST_PAIR_MAX_WAIT_MS.
+        poller.onPollResult(millis(), DevicePairingPollOutcome::TRANSPORT_ERROR);
+      }
+
+      if (!resolved && poller.state() == DevicePairingPollState::DENIED) {
+        outcome = "denied";
+        resolved = true;
+      }
+    }
+
+    // dueForPoll() can flip state() to EXPIRED on its own (local expiresIn
+    // timer), independent of whether a poll just ran -- check unconditionally,
+    // same as SyncPairingActivity::loop() does right after its own
+    // dueForPoll() call.
+    if (!resolved && poller.state() == DevicePairingPollState::EXPIRED) {
+      outcome = "expired";
+      resolved = true;
+    }
+    if (resolved) break;
+
+    if (!due) {
+      delayWallClock(TEST_PAIR_POLL_CHECK_MS);
+    }
+  }
+
+  bool progressSyncProvisioned = false;
+  if (resolved && strcmp(outcome, "approved") == 0) {
+    if (!SYNC_STORE.setPairing(token.accessToken, token.deviceId, token.deviceName, token.accountEmail)) {
+      outcome = "persist_failed";
+    } else if (token.kosyncKey[0] != '\0') {
+      // Same three calls as SyncPairingActivity::onPaired(): provisions the
+      // progress-sync credential from the same pairing response and matches
+      // by content hash so a renamed book does not lose synced position.
+      KOREADER_STORE.setProvisionedCredential(token.accountEmail, token.kosyncKey, SYNC_STORE.getBaseUrl());
+      KOREADER_STORE.setMatchMethod(DocumentMatchMethod::BINARY);
+      KOREADER_STORE.saveToFile();
+      progressSyncProvisioned = true;
+    }
+  }
+
+  String resultLine = "[TEST] {\"stage\":\"result\",\"outcome\":\"";
+  resultLine += outcome;
+  resultLine += "\"";
+  if (strcmp(outcome, "approved") == 0) {
+    resultLine += ",\"accountEmail\":";
+    appendJsonEscaped(resultLine, token.accountEmail, strlen(token.accountEmail));
+    resultLine += ",\"deviceName\":";
+    appendJsonEscaped(resultLine, token.deviceName, strlen(token.deviceName));
+    resultLine += ",\"progressSyncProvisioned\":";
+    resultLine += (progressSyncProvisioned ? "true" : "false");
+  }
+  resultLine += "}";
+  logSerial.println(resultLine);
+}
 #endif
 
 void loop() {
@@ -1431,6 +1641,10 @@ void loop() {
         } else {
           handled = false;
         }
+      } else if (cmd == "UNLINK") {
+        testConsoleUnlink();
+      } else if (cmd == "PAIR") {
+        testConsolePair();
       } else if (cmd == "SLEEP") {
         // Last known-good marker for the host to compare against once the device
         // wakes back up (or to inspect if it never does). Printed before the ack,
