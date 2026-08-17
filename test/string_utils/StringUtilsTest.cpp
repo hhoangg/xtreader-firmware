@@ -62,3 +62,54 @@ TEST(MiddleEllipsis, PreservesLeadingContextForTypicalRowCap) {
   const std::string result = StringUtils::middleEllipsis(url, 24);
   EXPECT_NE(result.find("crosspoint"), std::string::npos);
 }
+
+namespace {
+std::string jsonEscape(const std::string& value) {
+  std::string out;
+  StringUtils::appendJsonEscaped(out, value.data(), value.size());
+  return out;
+}
+}  // namespace
+
+TEST(AppendJsonEscaped, PlainAsciiPassesThroughQuoted) { EXPECT_EQ(jsonEscape("hello"), "\"hello\""); }
+
+TEST(AppendJsonEscaped, EscapesQuoteAndBackslash) { EXPECT_EQ(jsonEscape("a\"b\\c"), "\"a\\\"b\\\\c\""); }
+
+TEST(AppendJsonEscaped, EscapesNamedControlCharsWithShorthand) {
+  EXPECT_EQ(jsonEscape("a\nb\rc\td"), "\"a\\nb\\rc\\td\"");
+}
+
+TEST(AppendJsonEscaped, EscapesOtherControlCharsAndDelAsUnicodeEscape) {
+  EXPECT_EQ(jsonEscape(std::string("\x01", 1)), "\"\\u0001\"");
+  EXPECT_EQ(jsonEscape(std::string("\x7f", 1)), "\"\\u007f\"");
+  EXPECT_EQ(jsonEscape(std::string("\x00", 1)), "\"\\u0000\"");
+}
+
+TEST(AppendJsonEscaped, PassesMultiByteUtf8ThroughRawInsteadOfPerByteEscaping) {
+  // "Máy đọc của tôi 2" (Vietnamese device name from CMD:PAIR). The bug this
+  // guards against: escaping every UTF-8 byte as its own \u00XX turns each
+  // multi-byte character into a run of separate Latin-1-valued codepoints
+  // once a JSON decoder parses it back -- valid JSON, but mojibake ("MÃ¡y
+  // Ä‘á»c...") for any UTF-8-aware reader. The fix is to leave high-bit bytes
+  // untouched so the JSON string stays correct UTF-8.
+  // Split so each \xXX escape ends its own string literal token -- otherwise
+  // the lexer greedily consumes a following hex-digit character (e.g. the
+  // 'c' after \x8D, or the 'a' after \xA7) as more of the same escape.
+  const std::string name =
+      "M"
+      "\xC3\xA1"
+      "y "
+      "\xC4\x91"
+      "\xE1\xBB\x8D"
+      "c c"
+      "\xE1\xBB\xA7"
+      "a t"
+      "\xC3\xB4"
+      "i 2";
+  const std::string result = jsonEscape(name);
+  EXPECT_EQ(result, "\"" + name + "\"");
+  // Confirm no \u00XX escape leaked in for any high-bit byte.
+  EXPECT_EQ(result.find("\\u00"), std::string::npos);
+}
+
+TEST(AppendJsonEscaped, EmptyInputProducesEmptyQuotedString) { EXPECT_EQ(jsonEscape(""), "\"\""); }

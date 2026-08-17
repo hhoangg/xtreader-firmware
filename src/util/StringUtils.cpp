@@ -2,6 +2,8 @@
 
 #include <Utf8.h>
 
+#include <cstdint>
+#include <cstdio>
 #include <vector>
 
 namespace StringUtils {
@@ -86,6 +88,40 @@ std::string middleEllipsis(const std::string& value, size_t maxChars) {
   const size_t tailStartByte = offsets[totalChars - tailChars];
 
   return value.substr(0, headEndByte) + ELLIPSIS + value.substr(tailStartByte);
+}
+
+void appendJsonEscaped(std::string& out, const char* data, size_t len) {
+  out += '"';
+  for (size_t i = 0; i < len; i++) {
+    const uint8_t c = static_cast<uint8_t>(data[i]);
+    switch (c) {
+      case '"':
+        out += "\\\"";
+        break;
+      case '\\':
+        out += "\\\\";
+        break;
+      case '\n':
+        out += "\\n";
+        break;
+      case '\r':
+        out += "\\r";
+        break;
+      case '\t':
+        out += "\\t";
+        break;
+      default:
+        if (c < 0x20 || c == 0x7f) {
+          char esc[7];
+          snprintf(esc, sizeof(esc), "\\u%04x", c);
+          out += esc;
+        } else {
+          out += static_cast<char>(c);
+        }
+        break;
+    }
+  }
+  out += '"';
 }
 
 }  // namespace StringUtils

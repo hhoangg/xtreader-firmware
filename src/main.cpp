@@ -53,6 +53,7 @@
 #include "sync/Telemetry.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
+#include "util/StringUtils.h"
 #include "util/TaskWatchdog.h"
 
 GfxRenderer renderer(display);
@@ -695,44 +696,13 @@ constexpr unsigned long TEST_WIFI_PER_NETWORK_TIMEOUT_MS = 7000;
 // enough to eyeball a JSON healthcheck body without dumping a whole page.
 constexpr size_t TEST_HTTPGET_BODY_PREVIEW_MAX = 200;
 
-// Appends `data` as a double-quoted JSON string, escaping control characters,
-// the quote/backslash, and any byte outside printable ASCII as \u00XX. This
-// deliberately does NOT decode UTF-8 -- each byte gets its own \u00XX escape
-// -- so it is safe over arbitrary/binary response bytes without risking a
-// malformed multi-byte sequence; a JSON parser (e.g. Python's json.loads)
-// still accepts it and recovers the original bytes one code point at a time.
+// Appends `data` as a double-quoted JSON string. Thin wrapper around
+// StringUtils::appendJsonEscaped (host-testable) that adapts its std::string
+// output to the Arduino String this file's [TEST] line builders use.
 static void appendJsonEscaped(String& out, const char* data, size_t len) {
-  out += '"';
-  for (size_t i = 0; i < len; i++) {
-    const uint8_t c = static_cast<uint8_t>(data[i]);
-    switch (c) {
-      case '"':
-        out += "\\\"";
-        break;
-      case '\\':
-        out += "\\\\";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        if (c < 0x20 || c >= 0x7f) {
-          char esc[7];
-          snprintf(esc, sizeof(esc), "\\u%04x", c);
-          out += esc;
-        } else {
-          out += static_cast<char>(c);
-        }
-        break;
-    }
-  }
-  out += '"';
+  std::string escaped;
+  StringUtils::appendJsonEscaped(escaped, data, len);
+  out += escaped.c_str();
 }
 
 // Bounded, synchronous saved-network auto-connect for CMD:HTTPGET. Mirrors

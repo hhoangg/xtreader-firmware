@@ -197,6 +197,19 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
       return JSON_ERROR;
     }
 
+    // The reference kosync server -- and crosspoint-sync deliberately, per
+    // its docs/API.md -- answers 200 with an empty object instead of 404
+    // when nothing is stored for this document, so a 2xx body still has to
+    // be checked for content. Without this, an empty {} parses cleanly into
+    // all-default fields (percentage 0, progress "") and looks exactly like
+    // a real "0% at the start of the book" record, which would offer to
+    // apply a position that was never actually saved.
+    const JsonObjectConst obj = doc.as<JsonObjectConst>();
+    if (obj.isNull() || obj.size() == 0) {
+      LOG_DBG("KOSync", "Get progress: 2xx with empty body, no remote progress stored");
+      return NOT_FOUND;
+    }
+
     outProgress.document = documentHash;
     outProgress.progress = doc["progress"].as<std::string>();
     outProgress.percentage = doc["percentage"].as<float>();

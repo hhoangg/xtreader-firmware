@@ -51,4 +51,24 @@ std::string sanitizeFilename(const std::string& name, size_t maxBytes = 100);
  */
 std::string middleEllipsis(const std::string& value, size_t maxChars);
 
+/**
+ * Appends `data` (`len` bytes) to `out` as a double-quoted JSON string
+ * literal, escaping only what JSON requires: the quote, the backslash, and
+ * C0 control characters (using the named \n/\r/\t shorthands where they
+ * exist, \u00XX otherwise).
+ *
+ * `data` is assumed to already be valid UTF-8 (device names, file paths, log
+ * messages) -- bytes with the high bit set are copied through unescaped
+ * rather than being split into one \u00XX escape per byte. Splitting them up
+ * looks like a safe, parser-agnostic choice, but it isn't: a JSON decoder
+ * turns á into the single codepoint U+00E1, not the raw byte 0xE1, so a
+ * multi-byte UTF-8 character escaped this way decodes into a run of
+ * Latin-1-valued codepoints instead of the original character -- valid JSON,
+ * but mojibake for any UTF-8-aware reader (a terminal, or Python's
+ * str(json.loads(...))). Emitting the bytes raw keeps the JSON string
+ * correct UTF-8, matching how src/sync/DownloadQueue.cpp's logStage already
+ * embeds book paths via plain %s.
+ */
+void appendJsonEscaped(std::string& out, const char* data, size_t len);
+
 }  // namespace StringUtils
