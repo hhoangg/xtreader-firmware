@@ -16,10 +16,13 @@ namespace download_queue {
 
 namespace {
 
-// 4096 bytes: "Network, EPUB parsing" per CLAUDE.md's stack sizing table --
-// this task's whole job is a blocking HTTPS request plus SD writes, the same
-// budget class as the manifest sync path.
-constexpr uint32_t WORKER_STACK_BYTES = 4096;
+// A wolfSSL handshake plus the HTTP and SD layers above it overflows the 4096
+// bytes CLAUDE.md's table suggests for network work: on hardware that crashed
+// the device outright, at the first byte of the first download. The manifest
+// sync path survives on the same libraries only because it runs on the render
+// task, whose stack is far larger. Measured high-water is logged at the end of
+// every item so this stays honest rather than becoming another guess.
+constexpr uint32_t WORKER_STACK_BYTES = 12288;
 // How long the worker sleeps between checks while paused (queue non-empty
 // but the safety check says "not now") or once the queue is empty and it is
 // about to exit -- short enough that a resumed sync starts promptly, long
@@ -42,9 +45,10 @@ HeapPair sampleHeap() {
 // assumption ManifestIndexFormat.h relies on for its own '|' delimiter.
 void logStage(const char* stage, const std::string& id, const std::string& path, const HeapPair& heap) {
   if (!Serial) return;
-  logSerial.printf("[TEST] {\"component\":\"download_queue\",\"stage\":\"%s\",\"id\":\"%s\",\"path\":\"%s\","
-                   "\"free\":%u,\"maxAlloc\":%u}\n",
-                   stage, id.c_str(), path.c_str(), (unsigned)heap.freeHeap, (unsigned)heap.maxAllocHeap);
+  logSerial.printf(
+      "[TEST] {\"component\":\"download_queue\",\"stage\":\"%s\",\"id\":\"%s\",\"path\":\"%s\","
+      "\"free\":%u,\"maxAlloc\":%u}\n",
+      stage, id.c_str(), path.c_str(), (unsigned)heap.freeHeap, (unsigned)heap.maxAllocHeap);
 }
 
 void logItemEnd(const std::string& id, const std::string& path, const book_downloader::DownloadResult& result) {
@@ -174,6 +178,12 @@ class Worker {
         state_.finish(id, result.ok, result.error);
       }
       logItemEnd(id, path, result);
+      // Bytes of stack never touched. If this approaches zero the task is one
+      // library change away from the overflow that used to crash the device.
+      if (Serial) {
+        logSerial.printf("[TEST] {\"component\":\"download_queue\",\"stage\":\"stack\",\"headroomBytes\":%u}\n",
+                         (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
+      }
 
       vTaskDelay(1);  // yield between books rather than looping straight into the next one
     }
