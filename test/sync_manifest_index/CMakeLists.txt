@@ -4,6 +4,7 @@ add_executable(SyncManifestIndexTest
   ${REPO_ROOT}/lib/SyncManifest/ManifestIndexFormat.cpp
   ${REPO_ROOT}/lib/SyncManifest/ManifestIndexReader.cpp
   ${REPO_ROOT}/lib/SyncManifest/ManifestIndexQuery.cpp
+  ${REPO_ROOT}/lib/SyncManifest/ManifestIndexMerge.cpp
 )
 
 target_include_directories(SyncManifestIndexTest PRIVATE

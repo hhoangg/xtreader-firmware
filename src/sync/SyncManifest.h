@@ -43,20 +43,36 @@ struct SyncResult {
   bool ok = false;
   std::string error;  // empty on success; a short machine-readable reason otherwise (see sync()'s .cpp)
   uint32_t pagesFetched = 0;
+  // How many manifest entry lines the server sent this sync. In delta mode this counts every delta
+  // row received (updates, brand new books, and tombstones combined), not the net change in the
+  // index's size -- see ManifestIndexMerge for what actually happens to each one.
   uint32_t entriesWritten = 0;
   uint32_t totalCount = 0;  // the server's totalCount, as of the last trailer seen
+  // Whether this sync fetched `since` a prior watermark (merged onto the existing index) rather than
+  // the whole library (see sync()'s doc comment for when each happens).
+  bool deltaSync = false;
 
   HeapSample beforeRequest;   // before Wi-Fi/TLS/anything -- the sync's starting point
   HeapSample afterHandshake;  // inside the first page's first response-body callback (TLS + headers done)
   HeapSample afterLastPage;   // after the whole sync (all pages, index written and renamed into place)
 };
 
-// Fetches the full manifest (no `since` -- always a full listing, never a
-// delta; see SyncManifest.cpp for why) from the currently paired account
-// and replaces INDEX_PATH with it. Requires SYNC_STORE.isPaired() and a
-// connected network; neither is brought up here -- see CMD:MANIFESTSYNC in
-// main.cpp, which does both, for how this is exercised today ahead of any
-// UI trigger.
+// Fetches the manifest from the currently paired account and replaces
+// INDEX_PATH with the result. Requires SYNC_STORE.isPaired() and a connected
+// network; neither is brought up here -- see CMD:MANIFESTSYNC in main.cpp,
+// which does both, for how this is exercised today ahead of any UI trigger.
+//
+// Full or delta, decided automatically from whatever is already on SD: if
+// INDEX_PATH has a valid, current-format-version header (see
+// ManifestIndexFormat.h), its watermark is sent as `since` and the response
+// -- which may include tombstones -- is merged onto the existing index
+// in place (see ManifestIndexMerge). Otherwise (never synced, an
+// old-firmware index with no header, or a corrupt/truncated one)
+// this fetches the whole library, same as always. A delta merge that finds
+// the existing index itself unreadable mid-merge (corrupt, not just
+// missing) automatically retries once as a full sync -- see SyncManifest.cpp
+// -- rather than leaving the device with no working index and no way for
+// its reader to know why.
 SyncResult sync();
 
 // --- Read-side queries over the on-SD index --------------------------------
@@ -109,5 +125,20 @@ bool isDownloaded(const std::string& id);
 // failed; the caller treats that as "the book downloaded fine, but the
 // index couldn't be updated" (logged, not fatal to the download itself).
 bool markDownloaded(const std::string& id);
+
+// Drops `id`'s entry from the local index, in place -- built on
+// ManifestIndexMerge (a one-id removeIds, no upserts), the same primitive a
+// delta sync's merge uses for many ids at once. For when the server side of
+// a delete has already happened (book_server_delete::deleteFromServer) but
+// the local index still lists the book: without this, the next
+// FileBrowserActivity render finds the id still in remote.idx and shows the
+// just-deleted row as an "On server" placeholder -- the opposite of what
+// just happened -- until a full or delta resync eventually clears it. Safe
+// to call for an id that turns out not to be present (no-op, true) or when
+// there is no usable index at all (nothing to remove from, true) -- neither
+// is a fault. Returns false only if a real read/parse error or an SD write
+// failure left INDEX_TMP_PATH the sole trace of the attempt (removed before
+// returning, so a retried removal or the next sync starts clean).
+bool removeFromIndex(const std::string& id);
 
 }  // namespace sync_manifest

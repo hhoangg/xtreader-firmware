@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 
+#include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "SyncCredentialStore.h"
 #include "SyncPairingActivity.h"
@@ -86,6 +87,11 @@ void SyncSettingsActivity::launchPairing() {
 void SyncSettingsActivity::unlinkDevice() {
   app.clearTapFlash();
   SYNC_STORE.clearPairing();
+  // The provisioned progress-sync credential is only valid for this device's
+  // (now-forgotten) pairing -- leaving it configured would keep progress
+  // sync silently working against an account this device is no longer
+  // linked to. See KOReaderCredentialStore's provisioned-credential comment.
+  KOREADER_STORE.clearProvisionedCredential();
   requestUpdate();
 }
 

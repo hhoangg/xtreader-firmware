@@ -87,7 +87,7 @@ def run(device: DeviceTestConsole) -> None:
 
     print(
         f"[test_manifest] synced {event.get('entriesWritten')} entries across {event.get('pagesFetched')} page(s) "
-        f"(server totalCount={event.get('totalCount')})"
+        f"(server totalCount={event.get('totalCount')}, deltaSync={event.get('deltaSync')})"
     )
 
 

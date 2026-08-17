@@ -106,15 +106,16 @@ void codeOnArrayStart(void* ctx) { static_cast<CodeCtx*>(ctx)->lastKey = CodeKey
 void codeOnArrayEnd(void* ctx) { static_cast<CodeCtx*>(ctx)->lastKey = CodeKey::NONE; }
 
 // --- POST /device/token success ---------------------------------------------
-// {"accessToken","deviceId","deviceName","account":{"email",...}}.
+// {"accessToken","deviceId","deviceName","account":{"email",...},"kosync":{"key",...}}.
 
-enum class TokenKey : uint8_t { NONE, ACCESS_TOKEN, DEVICE_ID, DEVICE_NAME, ACCOUNT, EMAIL };
+enum class TokenKey : uint8_t { NONE, ACCESS_TOKEN, DEVICE_ID, DEVICE_NAME, ACCOUNT, EMAIL, KOSYNC, KOSYNC_KEY };
 
 struct TokenCtx {
   DeviceTokenResponse* out;
   TokenKey lastKey = TokenKey::NONE;
   uint8_t depth = 0;
   bool inAccount = false;
+  bool inKosync = false;
   bool haveAccessToken = false;
 };
 
@@ -123,6 +124,10 @@ void tokenOnKey(void* ctx, const char* key, size_t len) {
   self->lastKey = TokenKey::NONE;
   if (self->inAccount && self->depth == 2) {
     if (matches(key, len, "email")) self->lastKey = TokenKey::EMAIL;
+    return;
+  }
+  if (self->inKosync && self->depth == 2) {
+    if (matches(key, len, "key")) self->lastKey = TokenKey::KOSYNC_KEY;
     return;
   }
   if (self->depth != 1) return;
@@ -134,6 +139,8 @@ void tokenOnKey(void* ctx, const char* key, size_t len) {
     self->lastKey = TokenKey::DEVICE_NAME;
   else if (matches(key, len, "account"))
     self->lastKey = TokenKey::ACCOUNT;
+  else if (matches(key, len, "kosync"))
+    self->lastKey = TokenKey::KOSYNC;
 }
 
 void tokenOnString(void* ctx, const char* value, size_t len) {
@@ -152,6 +159,9 @@ void tokenOnString(void* ctx, const char* value, size_t len) {
     case TokenKey::EMAIL:
       safeCopy(self->out->accountEmail, sizeof(self->out->accountEmail), value, len);
       break;
+    case TokenKey::KOSYNC_KEY:
+      safeCopy(self->out->kosyncKey, sizeof(self->out->kosyncKey), value, len);
+      break;
     default:
       break;
   }
@@ -165,6 +175,7 @@ void tokenOnNull(void* ctx) { static_cast<TokenCtx*>(ctx)->lastKey = TokenKey::N
 void tokenOnObjectStart(void* ctx) {
   auto* self = static_cast<TokenCtx*>(ctx);
   if (self->lastKey == TokenKey::ACCOUNT && self->depth == 1) self->inAccount = true;
+  if (self->lastKey == TokenKey::KOSYNC && self->depth == 1) self->inKosync = true;
   self->depth++;
   self->lastKey = TokenKey::NONE;
 }
@@ -172,7 +183,10 @@ void tokenOnObjectStart(void* ctx) {
 void tokenOnObjectEnd(void* ctx) {
   auto* self = static_cast<TokenCtx*>(ctx);
   if (self->depth > 0) self->depth--;
-  if (self->depth <= 1) self->inAccount = false;
+  if (self->depth <= 1) {
+    self->inAccount = false;
+    self->inKosync = false;
+  }
   self->lastKey = TokenKey::NONE;
 }
 

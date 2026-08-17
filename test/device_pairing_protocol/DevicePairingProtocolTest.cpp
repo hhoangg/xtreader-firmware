@@ -68,13 +68,15 @@ TEST(DeviceTokenResponse, ParsesRealisticBody) {
     "accessToken": "tok_abcdef123456",
     "deviceId": "dev_xyz",
     "deviceName": "X4 của Lan",
-    "account": { "id": "usr_1", "email": "lan@example.com", "displayName": "Lan" }
+    "account": { "id": "usr_1", "email": "lan@example.com", "displayName": "Lan" },
+    "kosync": { "username": "lan@example.com", "key": "0123456789abcdef0123456789abcdef" }
   })";
   DeviceTokenResponse out;
   ASSERT_TRUE(parseTokenOk(json, out));
   EXPECT_STREQ(out.accessToken, "tok_abcdef123456");
   EXPECT_STREQ(out.deviceId, "dev_xyz");
   EXPECT_STREQ(out.accountEmail, "lan@example.com");
+  EXPECT_STREQ(out.kosyncKey, "0123456789abcdef0123456789abcdef");
 }
 
 TEST(DeviceTokenResponse, MissingAccessTokenFails) {
@@ -91,6 +93,31 @@ TEST(DeviceTokenResponse, MissingAccountObjectStillSucceeds) {
   ASSERT_TRUE(parseTokenOk(json, out));
   EXPECT_STREQ(out.accessToken, "tok_1");
   EXPECT_STREQ(out.accountEmail, "");
+}
+
+TEST(DeviceTokenResponse, MissingKosyncObjectStillSucceeds) {
+  // A server that predates KOSync provisioning omits "kosync" entirely --
+  // pairing must still succeed, just without a provisioned credential.
+  const char* json = R"({"accessToken": "tok_1", "deviceId": "dev_1", "account": {"email": "a@b.com"}})";
+  DeviceTokenResponse out;
+  ASSERT_TRUE(parseTokenOk(json, out));
+  EXPECT_STREQ(out.accountEmail, "a@b.com");
+  EXPECT_STREQ(out.kosyncKey, "");
+}
+
+TEST(DeviceTokenResponse, DoesNotConfuseAccountAndKosyncFields) {
+  // Both nested objects use different keys ("email" vs "key"), but this
+  // guards the depth/flag tracking that keeps them from bleeding into each
+  // other regardless of which one appears first.
+  const char* json = R"({
+    "accessToken": "tok_1",
+    "kosync": { "username": "a@b.com", "key": "11112222333344445555666677778888" },
+    "account": { "id": "usr_1", "email": "a@b.com", "displayName": "A" }
+  })";
+  DeviceTokenResponse out;
+  ASSERT_TRUE(parseTokenOk(json, out));
+  EXPECT_STREQ(out.accountEmail, "a@b.com");
+  EXPECT_STREQ(out.kosyncKey, "11112222333344445555666677778888");
 }
 
 // --- POST /device/token error --------------------------------------------

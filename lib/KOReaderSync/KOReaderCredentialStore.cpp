@@ -3,6 +3,7 @@
 #include <Logging.h>
 #include <MD5Builder.h>
 #include <ObfuscationUtils.h>
+#include <Preferences.h>
 
 namespace {
 // Default sync server URL. crosspoint-sync speaks the full KOSync protocol, so
@@ -16,6 +17,15 @@ constexpr char LEGACY_DEFAULT_SERVER_URL[] = "https://sync.koreader.rocks:443";
 
 // Bumped when a change to defaults would alter behavior for existing configs.
 constexpr uint8_t CONFIG_VERSION = 2;
+
+// NVS namespace for the pairing-provisioned credential -- separate from
+// SyncCredentialStore's own "cpsync" namespace (different store, different
+// lifecycle: this one is cleared on unlink but keyed by KOReaderSync, not
+// device pairing). Namespace/keys are well under ESP-IDF's 15-byte cap.
+constexpr char PROVISIONED_NVS_NAMESPACE[] = "cpkosync";
+constexpr char PROVISIONED_KEY_USERNAME[] = "user";
+constexpr char PROVISIONED_KEY_KEYMD5[] = "key";
+constexpr char PROVISIONED_KEY_SERVER_URL[] = "url";
 }  // namespace
 
 void KOReaderCredentialStore::toJson(JsonDocument& doc) const {
@@ -150,4 +160,53 @@ void KOReaderCredentialStore::setSyncBehavior(KOReaderSyncBehavior behavior) {
   }
   syncBehavior = behavior;
   LOG_DBG("KRS", "Set sync behavior: %s", behavior == KOReaderSyncBehavior::SMART ? "Smart" : "Ask");
+}
+
+void KOReaderCredentialStore::setProvisionedCredential(const std::string& username, const std::string& keyMd5,
+                                                       const std::string& serverUrl) {
+  Preferences prefs;
+  if (!prefs.begin(PROVISIONED_NVS_NAMESPACE, /*readOnly=*/false)) {
+    LOG_ERR("KRS", "Failed to open NVS namespace to save provisioned credential");
+    return;
+  }
+  prefs.putString(PROVISIONED_KEY_USERNAME, username.c_str());
+  prefs.putString(PROVISIONED_KEY_KEYMD5, keyMd5.c_str());
+  prefs.putString(PROVISIONED_KEY_SERVER_URL, serverUrl.c_str());
+  prefs.end();
+  LOG_DBG("KRS", "Provisioned KOSync credential for %s", username.c_str());
+}
+
+void KOReaderCredentialStore::clearProvisionedCredential() {
+  Preferences prefs;
+  if (prefs.begin(PROVISIONED_NVS_NAMESPACE, /*readOnly=*/false)) {
+    prefs.clear();
+    prefs.end();
+  }
+  LOG_DBG("KRS", "Cleared provisioned KOSync credential");
+}
+
+bool KOReaderCredentialStore::hasProvisionedCredential() const { return !getProvisionedUsername().empty(); }
+
+std::string KOReaderCredentialStore::getProvisionedUsername() const {
+  Preferences prefs;
+  if (!prefs.begin(PROVISIONED_NVS_NAMESPACE, /*readOnly=*/true)) return "";
+  const std::string value = prefs.getString(PROVISIONED_KEY_USERNAME, "").c_str();
+  prefs.end();
+  return value;
+}
+
+std::string KOReaderCredentialStore::getProvisionedKeyMd5() const {
+  Preferences prefs;
+  if (!prefs.begin(PROVISIONED_NVS_NAMESPACE, /*readOnly=*/true)) return "";
+  const std::string value = prefs.getString(PROVISIONED_KEY_KEYMD5, "").c_str();
+  prefs.end();
+  return value;
+}
+
+std::string KOReaderCredentialStore::getProvisionedServerUrl() const {
+  Preferences prefs;
+  if (!prefs.begin(PROVISIONED_NVS_NAMESPACE, /*readOnly=*/true)) return "";
+  const std::string value = prefs.getString(PROVISIONED_KEY_SERVER_URL, "").c_str();
+  prefs.end();
+  return value;
 }

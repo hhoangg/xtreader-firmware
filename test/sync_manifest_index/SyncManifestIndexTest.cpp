@@ -1,9 +1,11 @@
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
 #include "ManifestIndexFormat.h"
+#include "ManifestIndexMerge.h"
 #include "ManifestIndexQuery.h"
 
 namespace {
@@ -223,6 +225,263 @@ TEST(ManifestIndexDownloadedFlagLocator, OverflowsOnAnUnterminatedLineLongerThan
   locator.feed(reinterpret_cast<const uint8_t*>(noNewline.data()), noNewline.size());
   EXPECT_TRUE(locator.hasError());
   EXPECT_FALSE(locator.found());
+}
+
+// --- ManifestIndexFormat: header round trip ---------------------------------
+
+TEST(ManifestIndexHeader, RoundTrips) {
+  const std::string header = formatIndexHeader(1, 1755300000);
+  EXPECT_EQ(header.size(), INDEX_HEADER_LEN);
+  EXPECT_EQ(header.back(), '\n');
+
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  ASSERT_TRUE(parseIndexHeader(header.data(), header.size(), version, watermark));
+  EXPECT_EQ(version, 1u);
+  EXPECT_EQ(watermark, 1755300000u);
+}
+
+TEST(ManifestIndexHeader, RoundTripsZeroValues) {
+  const std::string header = formatIndexHeader(0, 0);
+  uint32_t version = 99;
+  uint64_t watermark = 99;
+  ASSERT_TRUE(parseIndexHeader(header.data(), header.size(), version, watermark));
+  EXPECT_EQ(version, 0u);
+  EXPECT_EQ(watermark, 0u);
+}
+
+TEST(ManifestIndexHeader, RoundTripsMaxWatermark) {
+  const std::string header = formatIndexHeader(1, UINT64_MAX);
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  ASSERT_TRUE(parseIndexHeader(header.data(), header.size(), version, watermark));
+  EXPECT_EQ(watermark, UINT64_MAX);
+}
+
+TEST(ManifestIndexHeader, RejectsWrongLength) {
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  EXPECT_FALSE(parseIndexHeader("CPIDX", 5, version, watermark));
+}
+
+TEST(ManifestIndexHeader, RejectsBadMagic) {
+  std::string header = formatIndexHeader(1, 42);
+  header[0] = 'X';
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  EXPECT_FALSE(parseIndexHeader(header.data(), header.size(), version, watermark));
+}
+
+TEST(ManifestIndexHeader, RejectsAMissingDelimiter) {
+  std::string header = formatIndexHeader(1, 42);
+  header[5] = 'x';  // clobber the '|' right after the magic
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  EXPECT_FALSE(parseIndexHeader(header.data(), header.size(), version, watermark));
+}
+
+TEST(ManifestIndexHeader, RejectsANonDigitInVersion) {
+  std::string header = formatIndexHeader(1, 42);
+  header[6] = 'x';
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  EXPECT_FALSE(parseIndexHeader(header.data(), header.size(), version, watermark));
+}
+
+TEST(ManifestIndexHeader, RejectsANonDigitInWatermark) {
+  std::string header = formatIndexHeader(1, 42);
+  header[20] = 'x';
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  EXPECT_FALSE(parseIndexHeader(header.data(), header.size(), version, watermark));
+}
+
+TEST(ManifestIndexHeader, AnOldFormatIndexsFirstLineFailsToParseAsAHeader) {
+  // A pre-header index's first line is a plain record, e.g. "bok_1|/path.epub|...|0" -- this must
+  // not be mistaken for a valid header. This is how an old-firmware index (written before this
+  // header existed at all) naturally falls back to a full resync, with no explicit version tag ever
+  // having existed in that old format -- see ManifestIndexFormat.h's header comment.
+  const std::string oldFirstLine = formatIndexLine(makeRecord("bok_1", "/path.epub"));
+  ASSERT_GE(oldFirstLine.size(), INDEX_HEADER_LEN);
+  uint32_t version = 0;
+  uint64_t watermark = 0;
+  EXPECT_FALSE(parseIndexHeader(oldFirstLine.data(), INDEX_HEADER_LEN, version, watermark));
+}
+
+// --- ManifestIndexMerge -------------------------------------------------------
+
+bool collectMergedRecords(void* ctx, const ManifestIndexRecord& r) {
+  auto* out = static_cast<std::vector<ManifestIndexRecord>*>(ctx);
+  out->push_back(r);
+  return true;
+}
+
+std::vector<std::string> idsOf(const std::vector<ManifestIndexRecord>& records) {
+  std::vector<std::string> ids;
+  ids.reserve(records.size());
+  for (const auto& r : records) ids.push_back(r.id);
+  return ids;
+}
+
+// A handful of records over ASCII-sortable paths, distinct from buildSampleIndex()'s Vietnamese one:
+// the merge-ordering tests below care about exactly how paths compare against each other, which is
+// easier to read and gets no help from (and no risk from) UTF-8 byte-order subtleties that are
+// already covered elsewhere (ManifestIndexPrefixScan's tests, formatIndexLine's round trip).
+std::string buildAsciiIndex() {
+  std::string out;
+  out += formatIndexLine(makeRecord("id_a", "/a/1.epub"));
+  out += formatIndexLine(makeRecord("id_b", "/a/2.epub"));
+  out += formatIndexLine(makeRecord("id_c", "/b/1.epub"));
+  out += formatIndexLine(makeRecord("id_d", "/c/1.epub"));
+  out += formatIndexLine(makeRecord("id_e", "/c/2.epub"));
+  return out;
+}
+
+TEST(ManifestIndexMerge, RemovesTheFirstRecord) {
+  const std::string index = buildSampleIndex();
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"bok_1"}, {}, &collectMergedRecords, &out);
+  ASSERT_TRUE(merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size()));
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+  EXPECT_EQ(idsOf(out), (std::vector<std::string>{"bok_2", "bok_3", "bok_4", "bok_5"}));
+}
+
+TEST(ManifestIndexMerge, RemovesAMiddleRecord) {
+  const std::string index = buildSampleIndex();
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"bok_3"}, {}, &collectMergedRecords, &out);
+  ASSERT_TRUE(merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size()));
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+  EXPECT_EQ(idsOf(out), (std::vector<std::string>{"bok_1", "bok_2", "bok_4", "bok_5"}));
+}
+
+TEST(ManifestIndexMerge, RemovesTheLastRecord) {
+  const std::string index = buildSampleIndex();
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"bok_5"}, {}, &collectMergedRecords, &out);
+  ASSERT_TRUE(merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size()));
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+  EXPECT_EQ(idsOf(out), (std::vector<std::string>{"bok_1", "bok_2", "bok_3", "bok_4"}));
+}
+
+TEST(ManifestIndexMerge, UntouchedRecordsSurviveByteForByte) {
+  // Regression guard for the removal primitive not silently mutating anything it passes through --
+  // in particular bok_5's downloaded=true, the one field a plain remove could plausibly clobber.
+  const std::string index = buildSampleIndex();
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"bok_1"}, {}, &collectMergedRecords, &out);
+  merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size());
+  merge.finish();
+  ASSERT_EQ(out.size(), 4u);
+  EXPECT_TRUE(out.back().downloaded);
+  EXPECT_EQ(out.back().id, "bok_5");
+}
+
+TEST(ManifestIndexMerge, RemovingAnAbsentIdIsANoOp) {
+  const std::string index = buildSampleIndex();
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"bok_does_not_exist"}, {}, &collectMergedRecords, &out);
+  ASSERT_TRUE(merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size()));
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+  EXPECT_EQ(idsOf(out), (std::vector<std::string>{"bok_1", "bok_2", "bok_3", "bok_4", "bok_5"}));
+}
+
+TEST(ManifestIndexMerge, EmptyResultWhenEverythingIsRemoved) {
+  std::string index;
+  index += formatIndexLine(makeRecord("bok_1", "/a.epub"));
+  index += formatIndexLine(makeRecord("bok_2", "/b.epub"));
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"bok_1", "bok_2"}, {}, &collectMergedRecords, &out);
+  ASSERT_TRUE(merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size()));
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+  EXPECT_TRUE(out.empty());
+}
+
+TEST(ManifestIndexMerge, FinishWithoutFeedingFlushesEveryUpsertForABrandNewIndex) {
+  // The from-scratch case: no old index was ever fed (an empty/missing one), so finish() alone must
+  // emit the whole delta, still in sorted order.
+  std::vector<ManifestIndexRecord> upserts{makeRecord("id_b", "/b.epub"), makeRecord("id_a", "/a.epub")};
+  std::sort(upserts.begin(), upserts.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({}, upserts, &collectMergedRecords, &out);
+  EXPECT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+  EXPECT_EQ(idsOf(out), (std::vector<std::string>{"id_a", "id_b"}));
+}
+
+TEST(ManifestIndexMerge, AppliesAnUpdateADeleteAndAnInsertInOnePass) {
+  const std::string index = buildAsciiIndex();
+
+  // id_b updated in place (same path, new contents); id_d tombstoned; a brand new id_f inserted
+  // between id_c and id_d's old positions.
+  std::vector<ManifestIndexRecord> upserts{makeRecord("id_b", "/a/2.epub", 999, "hash-updated"),
+                                           makeRecord("id_f", "/b/2.epub")};
+  std::sort(upserts.begin(), upserts.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"id_b", "id_d"}, upserts, &collectMergedRecords, &out);
+  ASSERT_TRUE(merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size()));
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+
+  EXPECT_EQ(idsOf(out), (std::vector<std::string>{"id_a", "id_b", "id_c", "id_f", "id_e"}));
+  // The updated id_b carries the delta's contents, not the old index's.
+  const auto updated = std::find_if(out.begin(), out.end(), [](const auto& r) { return r.id == "id_b"; });
+  ASSERT_NE(updated, out.end());
+  EXPECT_EQ(updated->contentHash, "hash-updated");
+  EXPECT_EQ(updated->sizeBytes, 999u);
+}
+
+TEST(ManifestIndexMerge, OrderingSurvivesAMergeIncludingARename) {
+  // id_r moves from "/m/rename-me.epub" (a middle position in the old index) to "/b/renamed.epub" --
+  // earlier than where it used to sort, but still after "/a/keep.epub" and before "/z/keep2.epub".
+  // The merge must place it at its *new* sorted position, not its old one, and drop the stale copy.
+  std::string index;
+  index += formatIndexLine(makeRecord("id_keep", "/a/keep.epub"));
+  index += formatIndexLine(makeRecord("id_r", "/m/rename-me.epub"));
+  index += formatIndexLine(makeRecord("id_keep2", "/z/keep2.epub"));
+
+  const std::vector<ManifestIndexRecord> upserts{makeRecord("id_r", "/b/renamed.epub")};
+
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"id_r"}, upserts, &collectMergedRecords, &out);
+  ASSERT_TRUE(merge.feed(reinterpret_cast<const uint8_t*>(index.data()), index.size()));
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+
+  ASSERT_EQ(out.size(), 3u);
+  EXPECT_EQ(out[0].path, "/a/keep.epub");
+  EXPECT_EQ(out[1].path, "/b/renamed.epub");
+  EXPECT_EQ(out[1].id, "id_r");
+  EXPECT_EQ(out[2].path, "/z/keep2.epub");
+}
+
+TEST(ManifestIndexMerge, WorksWhenFedInSmallChunksAcrossLineBoundaries) {
+  const std::string index = buildSampleIndex();
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({"bok_3"}, {}, &collectMergedRecords, &out);
+  bool fedOk = true;
+  for (size_t i = 0; i < index.size() && fedOk; ++i) {
+    fedOk = merge.feed(reinterpret_cast<const uint8_t*>(index.data() + i), 1);
+  }
+  ASSERT_TRUE(fedOk);
+  ASSERT_TRUE(merge.finish());
+  EXPECT_FALSE(merge.hasError());
+  EXPECT_EQ(idsOf(out), (std::vector<std::string>{"bok_1", "bok_2", "bok_4", "bok_5"}));
+}
+
+TEST(ManifestIndexMerge, ReportsErrorOnACorruptOldIndexLine) {
+  const std::string corrupt = "bok_1|/path.epub|not-a-number|hash|1755300000|0\n";
+  std::vector<ManifestIndexRecord> out;
+  ManifestIndexMerge merge({}, {}, &collectMergedRecords, &out);
+  EXPECT_FALSE(merge.feed(reinterpret_cast<const uint8_t*>(corrupt.data()), corrupt.size()));
+  EXPECT_TRUE(merge.hasError());
 }
 
 }  // namespace

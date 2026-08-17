@@ -914,6 +914,8 @@ static void testConsoleManifestSync() {
   out += (result.ok ? "true" : "false");
   out += ",\"error\":";
   appendJsonEscaped(out, result.error.data(), result.error.size());
+  out += ",\"deltaSync\":";
+  out += (result.deltaSync ? "true" : "false");
   out += ",\"pagesFetched\":";
   out += String(static_cast<unsigned>(result.pagesFetched));
   out += ",\"entriesWritten\":";
@@ -965,6 +967,39 @@ static void testConsoleManifestFirst() {
   appendJsonEscaped(out, match.path.data(), match.path.size());
   out += "}";
   logSerial.println(out);
+}
+
+// CMD:MANIFESTHASID <id> -- reports whether `id` is currently present in the
+// local manifest index (sync_manifest::findById()), and its path/downloaded
+// flag if so. No network, no mutation -- lets a host-side device test verify
+// what CMD:MANIFESTREMOVE (or the "Delete everywhere" UI flow's
+// removeFromIndex() fix-up) actually did to the on-SD index without a
+// second full CMD:MANIFESTSYNC.
+static void testConsoleManifestHasId(const std::string& id) {
+  ManifestIndexRecord record;
+  const bool found = sync_manifest::findById(id, record);
+
+  String out = "[TEST] {\"found\":";
+  out += (found ? "true" : "false");
+  out += ",\"path\":";
+  appendJsonEscaped(out, record.path.data(), record.path.size());
+  out += ",\"downloaded\":";
+  out += (record.downloaded ? "true" : "false");
+  out += "}";
+  logSerial.println(out);
+}
+
+// CMD:MANIFESTREMOVE <id> -- drops `id` from the local manifest index in
+// place (sync_manifest::removeFromIndex()), the exact primitive
+// FileBrowserActivity's "Delete everywhere" fix-up calls once the server
+// side of a delete has already succeeded. No network call of its own (unlike
+// CMD:SERVERDELETE, which only does the network half) -- pure local index
+// bookkeeping, safe to run against a synced index repeatedly to check
+// ordering/removal without touching the paired account's server library.
+// Requires a prior CMD:MANIFESTSYNC.
+static void testConsoleManifestRemove(const std::string& id) {
+  const bool ok = sync_manifest::removeFromIndex(id);
+  logSerial.printf("[TEST] {\"ok\":%s}\n", ok ? "true" : "false");
 }
 
 // CMD:BOOKDOWNLOAD <id> -- probes GET /library/:id/file end to end (the
@@ -1338,6 +1373,22 @@ void loop() {
         testConsoleManifestSync();
       } else if (cmd == "MANIFESTFIRST") {
         testConsoleManifestFirst();
+      } else if (cmd.startsWith("MANIFESTHASID ")) {
+        String idArg = cmd.substring(14);
+        idArg.trim();
+        if (idArg.length() > 0) {
+          testConsoleManifestHasId(std::string(idArg.c_str()));
+        } else {
+          handled = false;
+        }
+      } else if (cmd.startsWith("MANIFESTREMOVE ")) {
+        String idArg = cmd.substring(15);
+        idArg.trim();
+        if (idArg.length() > 0) {
+          testConsoleManifestRemove(std::string(idArg.c_str()));
+        } else {
+          handled = false;
+        }
       } else if (cmd.startsWith("BOOKDOWNLOAD ")) {
         String idArg = cmd.substring(13);
         idArg.trim();

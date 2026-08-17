@@ -9,6 +9,7 @@
 
 #include <memory>
 
+#include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
 #include "SilentRestart.h"
 #include "SyncCredentialStore.h"
@@ -215,6 +216,24 @@ void SyncPairingActivity::pollNow() {
 
 void SyncPairingActivity::onPaired(const DeviceTokenResponse& token) {
   SYNC_STORE.setPairing(token.accessToken, token.deviceId, token.deviceName, token.accountEmail);
+
+  // Configure progress sync from the same response, so scanning the QR is
+  // the only setup step for both syncs -- this replaces whatever KOReader
+  // Sync was previously configured (a manual account on a third-party
+  // server, or an earlier pairing's credential), same as SYNC_STORE.setPairing()
+  // above just replaced the file-sync token. Progress already stored under a
+  // replaced third-party account is not carried over.
+  if (token.kosyncKey[0] != '\0') {
+    KOREADER_STORE.setProvisionedCredential(token.accountEmail, token.kosyncKey, SYNC_STORE.getBaseUrl());
+    // BINARY (partial content MD5) survives the device renaming a book to
+    // match a server-side path change (see docs/API.md's manifest section on
+    // library.ts) -- FILENAME would silently start a new document and lose
+    // the synced position. It also matches real KOReader's own default, so a
+    // KOReader app sharing this account needs no matching change either.
+    KOREADER_STORE.setMatchMethod(DocumentMatchMethod::BINARY);
+    KOREADER_STORE.saveToFile();
+  }
+
   accountEmail_ = token.accountEmail;
   pairedDeviceName_ = token.deviceName;
   screen_ = Screen::SUCCESS;

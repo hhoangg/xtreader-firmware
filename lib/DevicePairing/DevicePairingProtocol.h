@@ -30,6 +30,11 @@ struct DeviceTokenResponse {
   char deviceId[64] = {};
   char deviceName[96] = {};
   char accountEmail[128] = {};
+  // KOSync progress-sync credential provisioned in the same response (see
+  // crosspoint-sync docs/API.md, "Pairing"). Its username is accountEmail
+  // above; the key is a 32-hex secret, ready to use as x-auth-key directly --
+  // caller stores it in NVS alongside accessToken, never on SD.
+  char kosyncKey[40] = {};
 };
 
 // The RFC 8628 error codes POST /device/token answers with (400) before the

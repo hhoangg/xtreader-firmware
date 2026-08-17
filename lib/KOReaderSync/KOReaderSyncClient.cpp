@@ -48,11 +48,20 @@ constexpr uint32_t MIN_BLOCK_FOR_TLS = 20000;
 
 // Apply the shared KOSync auth headers after begin(). x-auth-* is the native
 // KOSync scheme; Basic auth is added for Calibre-Web-Automated compatibility.
+// Goes through KOREADER_STORE's effective* getters (see that class's header
+// comment), which prefer a device-paired provisioned credential over a
+// manually-entered one when both exist. A provisioned credential has no real
+// "password" -- the key itself is sent as a harmless Basic-auth placeholder,
+// since crosspoint-sync (the only server a provisioned credential ever
+// points at) never reads that header.
 void applyAuthHeaders(freeink::SecureHttpClient& http) {
+  const std::string username = KOREADER_STORE.effectiveUsername();
+  const std::string keyMd5 = KOREADER_STORE.effectiveKeyMd5();
   http.addHeader("Accept", "application/vnd.koreader.v1+json");
-  http.addHeader("x-auth-user", KOREADER_STORE.getUsername());
-  http.addHeader("x-auth-key", KOREADER_STORE.getMd5Password());
-  const std::string credentials = KOREADER_STORE.getUsername() + ":" + KOREADER_STORE.getPassword();
+  http.addHeader("x-auth-user", username);
+  http.addHeader("x-auth-key", keyMd5);
+  const std::string password = KOREADER_STORE.hasProvisionedCredential() ? keyMd5 : KOREADER_STORE.getPassword();
+  const std::string credentials = username + ":" + password;
   const String encoded = base64::encode(credentials.c_str());
   http.addHeader("Authorization", std::string("Basic ") + encoded.c_str());
 }
@@ -72,12 +81,12 @@ bool insufficientHeap() {
 
 KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
   lastHttpCode = 0;
-  if (!KOREADER_STORE.hasCredentials()) {
+  if (!KOREADER_STORE.hasEffectiveCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
   }
 
-  const std::string url = KOREADER_STORE.getBaseUrl() + "/users/auth";
+  const std::string url = KOREADER_STORE.effectiveBaseUrl() + "/users/auth";
   LOG_DBG("KOSync", "Authenticating: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
   if (insufficientHeap()) return LOW_MEMORY;
 
@@ -143,12 +152,12 @@ KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
 KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& documentHash,
                                                           KOReaderProgress& outProgress) {
   lastHttpCode = 0;
-  if (!KOREADER_STORE.hasCredentials()) {
+  if (!KOREADER_STORE.hasEffectiveCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
   }
 
-  const std::string url = KOREADER_STORE.getBaseUrl() + "/syncs/progress/" + documentHash;
+  const std::string url = KOREADER_STORE.effectiveBaseUrl() + "/syncs/progress/" + documentHash;
   LOG_DBG("KOSync", "Getting progress: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
   if (insufficientHeap()) return LOW_MEMORY;
 
@@ -196,7 +205,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
     outProgress.timestamp = doc["timestamp"].as<int64_t>();
 
     outProgress.position.reset();
-    if (KOREADER_STORE.usesCrossPointSyncServer()) {
+    if (KOREADER_STORE.effectiveUsesCrossPointSyncServer()) {
       const JsonObjectConst pos = doc["position"].as<JsonObjectConst>();
       if (!pos.isNull()) {
         KOReaderRichPosition rich;
@@ -226,12 +235,12 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
 
 KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgress& progress) {
   lastHttpCode = 0;
-  if (!KOREADER_STORE.hasCredentials()) {
+  if (!KOREADER_STORE.hasEffectiveCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
   }
 
-  const std::string url = KOREADER_STORE.getBaseUrl() + "/syncs/progress";
+  const std::string url = KOREADER_STORE.effectiveBaseUrl() + "/syncs/progress";
   LOG_DBG("KOSync", "Updating progress: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
   if (insufficientHeap()) return LOW_MEMORY;
 
@@ -248,7 +257,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   doc["percentage"] = progress.percentage;
   doc["device"] = DEVICE_NAME;
   doc["device_id"] = DEVICE_ID;
-  if (progress.position.has_value() && KOREADER_STORE.usesCrossPointSyncServer()) {
+  if (progress.position.has_value() && KOREADER_STORE.effectiveUsesCrossPointSyncServer()) {
     // CrossPoint-specific extension: do not send it to third-party KOSync servers.
     const auto& p = *progress.position;
     auto pos = doc["position"].to<JsonObject>();

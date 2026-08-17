@@ -356,6 +356,16 @@ void FileBrowserActivity::performServerDeleteThenLocal(const std::string& fullPa
       return;  // do NOT fall back to a local-only delete -- see the header comment
     }
 
+    // The server copy is gone; drop it from the local index too, before loadFiles() (inside
+    // performLocalDelete()) gets a chance to re-read remote.idx. Without this, the just-deleted book
+    // still shows up there -- the local file is gone but the id remains -- so the row reappears as an
+    // "On server" placeholder, telling the reader the exact opposite of what just happened. A failure
+    // here is logged and otherwise ignored: the server-side delete already succeeded (the state the
+    // reader asked for), and a later sync's full/delta merge will clear the stale row regardless.
+    if (!sync_manifest::removeFromIndex(manifestId)) {
+      LOG_ERR("FileBrowser", "Failed to remove id=%s from the local index after server delete", manifestId.c_str());
+    }
+
     performLocalDelete(fullPath);
   };
 

@@ -79,6 +79,48 @@ class KOReaderCredentialStore : public PersistableStore<KOReaderCredentialStore>
   // Sync behavior
   void setSyncBehavior(KOReaderSyncBehavior behavior);
   KOReaderSyncBehavior getSyncBehavior() const { return syncBehavior; }
+
+  // --- Provisioned credential (from device pairing) -----------------------
+  // Set by SyncPairingActivity on a successful pairing; cleared by
+  // SyncSettingsActivity on unlink. Deliberately NOT part of the
+  // username/password/toJson()/fromJson() above: those are obfuscated and
+  // written to the SD card (readable in any card reader), which is fine for
+  // a manually-typed KOReader password but not for a bearer-token-like
+  // secret minted by the pairing server. This lives in NVS instead, the same
+  // partition SyncCredentialStore's own pairing token uses, and every getter
+  // re-reads it live (no in-memory cache) so an unlink or a re-pair takes
+  // effect immediately without a reboot.
+  //
+  // KOReaderSyncClient checks hasProvisionedCredential() first and prefers
+  // these three over getUsername()/getMd5Password()/getBaseUrl() whenever
+  // it is set, so a paired device needs no manual KOReader Sync setup.
+  // getMatchMethod() above is untouched by this: it is not a secret, and
+  // SyncPairingActivity sets it directly (still SD-persisted) instead.
+  void setProvisionedCredential(const std::string& username, const std::string& keyMd5, const std::string& serverUrl);
+  void clearProvisionedCredential();
+  bool hasProvisionedCredential() const;
+  std::string getProvisionedUsername() const;
+  std::string getProvisionedKeyMd5() const;
+  std::string getProvisionedServerUrl() const;
+
+  // --- Effective credential: the precedence every caller should use -------
+  // Provisioned when set, otherwise the manual fields above. KOReaderSyncClient
+  // and KOReaderSyncActivity go through these exclusively (never the raw
+  // manual/provisioned getters directly) so a paired device needs no separate
+  // "sync progress" setup. effectiveKeyMd5() returns the provisioned key as-is
+  // (it is already MD5-shaped, see setProvisionedCredential()'s caller) rather
+  // than hashing it again.
+  bool hasEffectiveCredentials() const { return hasProvisionedCredential() || hasCredentials(); }
+  std::string effectiveUsername() const {
+    return hasProvisionedCredential() ? getProvisionedUsername() : getUsername();
+  }
+  std::string effectiveKeyMd5() const { return hasProvisionedCredential() ? getProvisionedKeyMd5() : getMd5Password(); }
+  std::string effectiveBaseUrl() const { return hasProvisionedCredential() ? getProvisionedServerUrl() : getBaseUrl(); }
+  // A provisioned credential always targets a crosspoint-sync-compatible
+  // server by construction (it came from that server's own pairing
+  // response), regardless of self-hosted domain -- unlike the manual path,
+  // which has to compare hostnames because the user could have typed anything.
+  bool effectiveUsesCrossPointSyncServer() const { return hasProvisionedCredential() || usesCrossPointSyncServer(); }
 };
 
 // Helper macro to access credential store

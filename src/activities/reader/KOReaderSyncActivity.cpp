@@ -328,7 +328,7 @@ void KOReaderSyncActivity::performUpload() {
   // Rich CrossPoint position for the default CrossPoint sync server (lossless
   // CrossPoint<->CrossPoint sync). The HTTP client also enforces this boundary
   // before serializing the extension.
-  if (KOREADER_STORE.usesCrossPointSyncServer()) {
+  if (KOREADER_STORE.effectiveUsesCrossPointSyncServer()) {
     KOReaderRichPosition pos;
     const float pct = localProgress.percentage < 0.0f   ? 0.0f
                       : localProgress.percentage > 1.0f ? 1.0f
@@ -396,8 +396,10 @@ void KOReaderSyncActivity::onEnter() {
   app.on(ACTION_ROW, &KOReaderSyncActivity::onResultRow, this);
   app.setScreen(&KOReaderSyncActivity::resultScreen, this);
 
-  // Check for credentials first
-  if (!KOREADER_STORE.hasCredentials()) {
+  // Check for credentials first -- prefers a device-paired provisioned
+  // credential over a manually-entered one; see KOReaderCredentialStore's
+  // effective* getters.
+  if (!KOREADER_STORE.hasEffectiveCredentials()) {
     state = NO_CREDENTIALS;
     requestUpdate();
     return;
