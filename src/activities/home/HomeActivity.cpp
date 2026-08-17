@@ -414,17 +414,23 @@ void HomeActivity::trySyncLibrary() {
   // FileBrowserActivity's force-delete popups, which run from the loop task
   // and do need one).
   GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
-  const sync_manifest::SyncResult syncResult = sync_manifest::sync();
+  // Automatic -- nothing the reader explicitly asked for is waiting on this,
+  // so bound it short (see SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS): a
+  // captive portal or black-holed server must not stall the render task
+  // behind the popup above.
+  const sync_manifest::SyncResult syncResult = sync_manifest::sync(sync_trigger::AUTO_SYNC_TIMEOUT_MS);
   // FileBrowserActivity reads whatever landed on SD; syncResult itself is only used below.
   requestUpdate();  // redraw Home without the popup
 
   // WiFi is already up for the manifest sync above -- one of the two moments
   // (task brief) a heartbeat can ride along without paying its own WiFi cost.
   // Best-effort: a failed heartbeat must not affect the library sync it rides
-  // with, so its result is only logged, never surfaced to the reader.
+  // with, so its result is only logged, never surfaced to the reader. Same
+  // automatic bound as the sync above.
   telemetry::HeartbeatInfo heartbeatInfo = telemetry::currentDeviceHeartbeatInfo();
   heartbeatInfo.lastSyncStatus = syncResult.ok ? "ok" : "failed";
-  const telemetry::TelemetryResult heartbeatResult = telemetry::sendHeartbeat(heartbeatInfo);
+  const telemetry::TelemetryResult heartbeatResult =
+      telemetry::sendHeartbeat(heartbeatInfo, sync_trigger::AUTO_SYNC_TIMEOUT_MS);
   if (!heartbeatResult.ok) {
     LOG_DBG("HOME", "Heartbeat piggybacked on library sync failed (error=%s status=%d) -- diagnostics only",
             heartbeatResult.error.c_str(), heartbeatResult.httpStatus);

@@ -1519,6 +1519,46 @@ static void testConsoleSleepSyncBench() {
 
   activityManager.requestUpdate(true);
 }
+
+// CMD:CAPTIVEPORTALBENCH -- measures enterDeepSleep()'s before-sleep KOSync
+// upload against a network that associates normally but whose server never
+// answers: real saved Wi-Fi (unlike CMD:SLEEPSYNCBENCH, which substitutes a
+// bogus SSID), with only the upload's own target diverted to a black-holed
+// test address (KOReaderSyncClient::setTestBlackHoleOverride(), via
+// SleepProgressSync.cpp's benchTrySyncAgainstBlackHole()). This is the case
+// the task brief actually asks to be reproducible: a captive portal, or any
+// server that accepts the TCP connection and then never responds. Per-stage
+// elapsed-ms lines come from SleepProgressSync.cpp's own [TEST] JSON
+// (sleep_sync_wifi / sleep_sync_upload / sleep_sync_heartbeat_skipped /
+// sleep_sync_total) -- sleep_sync_wifi should be fast here (real
+// association), all of the time should land in sleep_sync_upload, and
+// sleep_sync_heartbeat_skipped should appear (rather than a heartbeat stage)
+// once the upload sees NETWORK_ERROR. This command only reports the
+// decision and final outcome, same shape as CMD:SLEEPSYNC/SLEEPSYNCBENCH.
+static void testConsoleCaptivePortalBench() {
+  const bool isReader = activityManager.isReaderActivity();
+  const bool paired = SYNC_STORE.isPaired() && KOREADER_STORE.hasEffectiveCredentials();
+  const bool dirty = activityManager.readerHasUnsyncedProgress();
+  const bool shouldSync = sync_trigger::shouldSyncBeforeSleep(paired, isReader, dirty);
+
+  logSerial.printf(
+      "[TEST] {\"stage\":\"captive_portal_bench_decision\",\"paired\":%s,\"isReader\":%s,\"dirty\":%s,\"shouldSync\":"
+      "%s}\n",
+      paired ? "true" : "false", isReader ? "true" : "false", dirty ? "true" : "false", shouldSync ? "true" : "false");
+
+  if (shouldSync) {
+    KOReaderProgress progress;
+    if (activityManager.captureReaderProgressForSleep(progress)) {
+      const bool sent = sleep_progress_sync::benchTrySyncAgainstBlackHole(progress);
+      logSerial.printf("[TEST] {\"stage\":\"captive_portal_bench_result\",\"sent\":%s}\n", sent ? "true" : "false");
+    } else {
+      logSerial.println(
+          "[TEST] {\"stage\":\"captive_portal_bench_result\",\"sent\":false,\"reason\":\"capture_failed\"}");
+    }
+  }
+
+  activityManager.requestUpdate(true);
+}
 #endif
 
 void loop() {
@@ -1734,6 +1774,8 @@ void loop() {
         testConsoleSleepSync();
       } else if (cmd == "SLEEPSYNCBENCH") {
         testConsoleSleepSyncBench();
+      } else if (cmd == "CAPTIVEPORTALBENCH") {
+        testConsoleCaptivePortalBench();
       } else if (cmd == "SLEEP") {
         // Last known-good marker for the host to compare against once the device
         // wakes back up (or to inspect if it never does). Printed before the ack,

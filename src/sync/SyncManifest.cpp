@@ -263,7 +263,7 @@ bool writeMergedRecord(void* ctxPtr, const ManifestIndexRecord& record) {
 // result to INDEX_TMP_PATH, and rename it into place. On a delta whose merge finds the *existing*
 // index corrupt mid-scan, returns error="corrupt_index" without renaming anything -- sync() below is
 // what turns that into a full-sync retry.
-SyncResult performSync(const bool deltaMode, const uint64_t sinceWatermark) {
+SyncResult performSync(const bool deltaMode, const uint64_t sinceWatermark, const uint32_t timeoutMs) {
   SyncResult result;
   result.deltaSync = deltaMode;
   result.beforeRequest = sampleHeap();
@@ -325,7 +325,7 @@ SyncResult performSync(const bool deltaMode, const uint64_t sinceWatermark) {
           }
           return parser.feed(data, len);
         },
-        "", "", &httpStatus, SYNC_STORE.getAccessToken());
+        "", "", &httpStatus, SYNC_STORE.getAccessToken(), timeoutMs);
 
     if (writeFailed) {
       result.error = "sd_write_failed";
@@ -443,7 +443,7 @@ SyncResult performSync(const bool deltaMode, const uint64_t sinceWatermark) {
 
 }  // namespace
 
-SyncResult sync() {
+SyncResult sync(const uint32_t timeoutMs) {
   HalFile existingIndex;
   uint32_t existingVersion = 0;
   uint64_t existingWatermark = 0;
@@ -452,10 +452,10 @@ SyncResult sync() {
   const bool haveWatermark = openIndexForScan(INDEX_PATH, O_RDONLY, existingIndex, existingVersion, existingWatermark);
   if (existingIndex) existingIndex.close();
 
-  SyncResult result = performSync(haveWatermark, existingWatermark);
+  SyncResult result = performSync(haveWatermark, existingWatermark, timeoutMs);
   if (!result.ok && result.error == "corrupt_index") {
     LOG_ERR("SYNC", "Falling back to a full resync after a corrupt existing index");
-    result = performSync(false, 0);
+    result = performSync(false, 0, timeoutMs);
   }
   return result;
 }

@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 
+#include "SyncTriggerPolicy.h"
+
 /**
  * The three device-auth POST endpoints under "Feedback and telemetry" in
  * crosspoint-sync docs/API.md: heartbeat health data, "I want more books",
@@ -10,6 +12,14 @@
  * small JSON POST via HttpDownloader::postJson, same shape as
  * SyncPairingActivity's own calls to /device/code and /device/token, just
  * with a bearer token attached.
+ *
+ * Every function below takes a timeoutMs, defaulting to
+ * SyncTriggerPolicy.h's EXPLICIT_SYNC_TIMEOUT_MS: right for something the
+ * reader asked for directly (Sync Now, "I want more books"). An automatic
+ * caller riding a heartbeat along with a background sync (HomeActivity,
+ * SleepProgressSync) or delivering a deferred event with nobody watching
+ * (BookFinishedNotifier) passes AUTO_SYNC_TIMEOUT_MS instead, so a captive
+ * portal or black-holed server cannot stall it -- see that header for why.
  */
 namespace telemetry {
 
@@ -40,7 +50,7 @@ struct HeartbeatInfo {
   std::string lastErrorCode;    // the short on-screen code, e.g. "E-03"
   std::string lastErrorDetail;  // never shown on-device; sent here instead
 };
-TelemetryResult sendHeartbeat(const HeartbeatInfo& info);
+TelemetryResult sendHeartbeat(const HeartbeatInfo& info, uint32_t timeoutMs = sync_trigger::EXPLICIT_SYNC_TIMEOUT_MS);
 
 // Fills batteryPercent, sdTotalBytes and sdFreeBytes from the live HAL
 // (HalPowerManager::getBatteryPercentage(), HalStorage::sdTotalBytes()/
@@ -54,11 +64,12 @@ HeartbeatInfo currentDeviceHeartbeatInfo();
 // books" -- the product's whole point for someone who cannot add books
 // themselves and cannot describe a fault (see docs/API.md's "Feedback and
 // telemetry" section).
-TelemetryResult requestBooks();
+TelemetryResult requestBooks(uint32_t timeoutMs = sync_trigger::EXPLICIT_SYNC_TIMEOUT_MS);
 
 // POST /events/book-finished. Exactly one of bookId/documentHash should be
 // non-empty; bookId takes precedence if both are (matching the API's `{
 // "bookId" }` or `{ "documentHash" }` -- never both).
-TelemetryResult bookFinished(const std::string& bookId, const std::string& documentHash = "");
+TelemetryResult bookFinished(const std::string& bookId, const std::string& documentHash = "",
+                             uint32_t timeoutMs = sync_trigger::EXPLICIT_SYNC_TIMEOUT_MS);
 
 }  // namespace telemetry

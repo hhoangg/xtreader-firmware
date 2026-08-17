@@ -96,9 +96,14 @@ class KOReaderSyncClient {
   /**
    * Update reading progress for a document.
    * @param progress The progress data to upload
+   * @param timeoutMs TLS/HTTP deadline for this request. Defaults to the
+   *   ~15s an explicit KOSync action (KOReaderSyncActivity) already accepts;
+   *   an automatic caller with nobody watching (SleepProgressSync) passes a
+   *   much shorter bound instead so a captive portal or black-holed server
+   *   cannot stall it -- see SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS.
    * @return OK on success, error code on failure
    */
-  static Error updateProgress(const KOReaderProgress& progress);
+  static Error updateProgress(const KOReaderProgress& progress, uint32_t timeoutMs = 15000);
 
   /**
    * Get human-readable error message.
@@ -107,4 +112,15 @@ class KOReaderSyncClient {
 
   /** HTTP status code from the last request (for diagnostics). */
   static int lastHttpCode;
+
+#ifdef CP_TEST_CONSOLE
+  // CMD:CAPTIVEPORTALBENCH -- when enabled, updateProgress() targets a
+  // black-holed test address (RFC 5737 TEST-NET-1: 192.0.2.0/24, never
+  // routed) instead of KOREADER_STORE's real effective base URL, so "the
+  // network associates but the server never answers" can be measured on
+  // hardware without touching any real credential or server state. Cleared
+  // immediately after by the bench caller; never persisted -- see
+  // SleepProgressSync.cpp's benchTrySyncAgainstBlackHole().
+  static void setTestBlackHoleOverride(bool enabled);
+#endif
 };

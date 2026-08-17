@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Pure decision for "should an automatic library sync run right now?" --
 // factored out of HomeActivity.cpp/main.cpp so the rule can be host-tested
 // without ESP-IDF/Arduino (see test/sync_trigger_policy). The device-only
@@ -21,6 +23,36 @@
 //    this from the library screen (HomeActivity) in the first place -- not
 //    re-checked here, since a pure function has no activity to ask.
 namespace sync_trigger {
+
+// Deadlines for the crosspoint-sync network calls the *should I sync*
+// decisions above gate: WiFi.status() == WL_CONNECTED only proves the
+// device associated with an access point, not that the internet behind it
+// actually works -- a hotel/cafe captive portal, exactly where a traveller
+// ends up, answers every TCP connect (so it can serve its login page) while
+// nothing real gets through. The only reliable way to tell the two apart is
+// a real attempt against our own server with a short deadline; duplicating
+// that as a separate probe would cost the same as just bounding the real
+// request, so every crosspoint-sync call site passes one of these two
+// instead of adding a probe (see this task's report).
+//
+// AUTO_SYNC_TIMEOUT_MS bounds an attempt nothing is waiting on: the
+// automatic manifest sync + its piggybacked heartbeat (HomeActivity), the
+// deferred book-finished delivery (BookFinishedNotifier), and the sleep
+// heartbeat (SleepProgressSync) -- all invisible on failure, so short is
+// right even at the cost of occasionally giving up on a slow-but-real
+// connection. Order-of-magnitude matched to SleepProgressSync.h's own
+// WIFI_CONNECT_TIMEOUT_MS budget for the same reasoning: long enough for one
+// real TLS handshake to a reachable server (well under 1s in the common
+// case), short enough that a captive portal or black-holed server does not
+// stall the render task, or a power-off behind it, for long.
+//
+// EXPLICIT_SYNC_TIMEOUT_MS bounds something the reader asked for directly
+// (Sync Now, request-books, the pre-sleep KOSync upload once WiFi is up):
+// the same ~15s KOReaderSyncClient's own default already gives an explicit
+// KOSync action, named here once instead of repeating the same magic number
+// with the same intent at every crosspoint-sync call site.
+constexpr uint32_t AUTO_SYNC_TIMEOUT_MS = 3000;
+constexpr uint32_t EXPLICIT_SYNC_TIMEOUT_MS = 15000;
 
 bool shouldAutoSync(bool paired, bool wifiConnected, bool alreadyAttemptedThisBoot);
 

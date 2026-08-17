@@ -5,6 +5,7 @@
 
 #include "ManifestIndexFormat.h"
 #include "ManifestIndexQuery.h"
+#include "SyncTriggerPolicy.h"
 
 /**
  * Fetches GET /library/manifest (crosspoint-sync docs/API.md) and persists
@@ -73,7 +74,14 @@ struct SyncResult {
 // missing) automatically retries once as a full sync -- see SyncManifest.cpp
 // -- rather than leaving the device with no working index and no way for
 // its reader to know why.
-SyncResult sync();
+//
+// timeoutMs bounds each page's own fetch (a multi-page sync can pay it more
+// than once) -- defaults to SyncTriggerPolicy.h's EXPLICIT_SYNC_TIMEOUT_MS,
+// right for something the reader asked for directly (Sync Now); the
+// automatic caller (HomeActivity) passes AUTO_SYNC_TIMEOUT_MS instead so a
+// captive portal or black-holed server cannot stall the render task behind
+// it -- see that header for why.
+SyncResult sync(uint32_t timeoutMs = sync_trigger::EXPLICIT_SYNC_TIMEOUT_MS);
 
 // --- Read-side queries over the on-SD index --------------------------------
 // All three read INDEX_PATH in small fixed-size chunks, never the whole

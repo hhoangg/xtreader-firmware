@@ -10,6 +10,7 @@
 #include "CrossPointState.h"
 #include "KOReaderSyncClient.h"
 #include "SleepWifiBackoffPolicy.h"
+#include "SyncTriggerPolicy.h"
 #include "Telemetry.h"
 #include "WifiCredentialStore.h"
 #include "activities/RenderLock.h"
@@ -199,9 +200,11 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
     return false;
   }
 
-  saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, true));
-
   if (powerButtonPressedAgain()) {
+    // Same "power button wins" reasoning as the cancellation branch above:
+    // not evidence of a reachability problem, just an owner who wants the
+    // device off now -- leave the back-off state untouched (it is saved
+    // below, only once the upload actually ran).
     LOG_DBG("SLPSYNC", "Before-sleep sync cancelled by power button after Wi-Fi connected; skipping upload");
     return false;
   }
@@ -209,7 +212,12 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 #ifdef CP_TEST_CONSOLE
   const unsigned long uploadStart = millis();
 #endif
-  const auto result = KOReaderSyncClient::updateProgress(progress);
+  // AUTO_SYNC_TIMEOUT_MS, not KOReaderSyncClient's own explicit-action
+  // default: nobody is watching this attempt, so a captive portal or
+  // black-holed server (Wi-Fi associates, then the request itself never
+  // answers -- see this task's report) must not add its own multi-second
+  // stall on top of the Wi-Fi budget already spent above.
+  const auto result = KOReaderSyncClient::updateProgress(progress, sync_trigger::AUTO_SYNC_TIMEOUT_MS);
   const bool sent = (result == KOReaderSyncClient::OK);
   if (!sent) {
     LOG_ERR("KOSync", "Sleep sync failed: %s", KOReaderSyncClient::errorString(result));
@@ -219,6 +227,29 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 #endif
   LOG_DBG("SLPSYNC", "Before-sleep sync %s", sent ? "sent" : "failed");
 
+  // NETWORK_ERROR specifically -- not just "sent != OK" -- is the signal
+  // that Wi-Fi associated but nothing behind it actually answered (a
+  // captive portal or black-holed server). Any other outcome (AUTH_FAILED,
+  // SERVER_ERROR, ...) still proves a real HTTP response came back, i.e.
+  // the network itself was fine, so it must not earn a skip -- see
+  // SleepWifiBackoffPolicy.h's reachedNetwork().
+  const bool reached = sleep_wifi_backoff::reachedNetwork(wifiConnected, result == KOReaderSyncClient::NETWORK_ERROR);
+  saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, reached));
+
+  if (!reached) {
+    // The heartbeat below would hit the same unreachable network the upload
+    // above just did -- skip it rather than paying its own deadline for a
+    // result already known. Best-effort like the upload itself, so this is
+    // never surfaced beyond a log line.
+    LOG_DBG("SLPSYNC", "Skipping heartbeat piggyback: before-sleep sync could not reach the network");
+#ifdef CP_TEST_CONSOLE
+    logStageJson("sleep_sync_heartbeat_skipped", 0);
+    logHeapJson("done");
+    logStageJson("sleep_sync_total", millis() - overallStart);
+#endif
+    return sent;
+  }
+
   // WiFi is already up here for the progress upload above -- the other of
   // the two moments (task brief) a heartbeat can ride along without paying
   // its own WiFi cost. Battery is read now, at power-off, rather than at the
@@ -226,9 +257,11 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
   // the device may sit idle for days, so it should reflect the state the
   // device is actually going dark in. Best-effort like the progress upload
   // itself: a failed heartbeat must not affect this sleep, only be logged.
+  // Automatic bound, same reasoning as the upload above.
   telemetry::HeartbeatInfo heartbeatInfo = telemetry::currentDeviceHeartbeatInfo();
   heartbeatInfo.lastSyncStatus = sent ? "ok" : "failed";
-  const telemetry::TelemetryResult heartbeatResult = telemetry::sendHeartbeat(heartbeatInfo);
+  const telemetry::TelemetryResult heartbeatResult =
+      telemetry::sendHeartbeat(heartbeatInfo, sync_trigger::AUTO_SYNC_TIMEOUT_MS);
   if (!heartbeatResult.ok) {
     LOG_DBG("SLPSYNC", "Heartbeat piggybacked on before-sleep sync failed (error=%s status=%d) -- diagnostics only",
             heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
@@ -247,6 +280,17 @@ bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress) {
   benchForceBogusNetwork = true;
   const bool sent = trySyncBeforeSleep(progress);
   benchForceBogusNetwork = false;
+  return sent;
+}
+
+bool benchTrySyncAgainstBlackHole(const KOReaderProgress& progress) {
+  // Real saved Wi-Fi (benchForceBogusNetwork stays false), so association
+  // succeeds normally -- only the KOSync upload target is diverted, standing
+  // in for a captive portal or a server that accepted the TCP connection
+  // and never answered. See KOReaderSyncClient::setTestBlackHoleOverride().
+  KOReaderSyncClient::setTestBlackHoleOverride(true);
+  const bool sent = trySyncBeforeSleep(progress);
+  KOReaderSyncClient::setTestBlackHoleOverride(false);
   return sent;
 }
 #endif

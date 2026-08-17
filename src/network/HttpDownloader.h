@@ -1,6 +1,7 @@
 #pragma once
 #include <HalStorage.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -23,6 +24,15 @@ class HttpDownloader {
     ABORTED,
   };
 
+  // Per-socket-op deadline used by every call below that doesn't pass its own
+  // timeoutMs -- tuned for OPDS catalogs and book downloads, which can be
+  // slow to send headers or stall mid-body on a slow CDN. crosspoint-sync's
+  // own small JSON/manifest endpoints pass a much shorter deadline instead
+  // (see lib/SyncManifest/SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS /
+  // EXPLICIT_SYNC_TIMEOUT_MS) so a captive portal or black-holed server can't
+  // stall a sync behind this download-tuned default.
+  static constexpr uint32_t DEFAULT_TIMEOUT_MS = 60000;
+
   /**
    * Fetch text content from a URL with optional credentials.
    */
@@ -42,9 +52,12 @@ class HttpDownloader {
    * takes precedence over username/password Basic auth -- crosspoint-sync's
    * device-authenticated routes (GET /library/manifest, etc.) use an opaque
    * bearer token (see SyncCredentialStore), not Basic auth.
+   *
+   * timeoutMs overrides DEFAULT_TIMEOUT_MS for this request.
    */
   static bool fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username = "",
-                       const std::string& password = "", int* outStatus = nullptr, const std::string& bearerToken = "");
+                       const std::string& password = "", int* outStatus = nullptr, const std::string& bearerToken = "",
+                       uint32_t timeoutMs = DEFAULT_TIMEOUT_MS);
 
   /**
    * POST a small JSON body and buffer the (small) response into outResponse.
@@ -60,9 +73,12 @@ class HttpDownloader {
    * way GET /library/manifest is (see the streaming fetchUrl() overload's
    * comment). Device pairing's own POSTs (/device/code, /device/token) take
    * no auth at all, so they simply omit this argument.
+   *
+   * timeoutMs overrides DEFAULT_TIMEOUT_MS for this request.
    */
   static bool postJson(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                       int* outStatus = nullptr, const std::string& bearerToken = "");
+                       int* outStatus = nullptr, const std::string& bearerToken = "",
+                       uint32_t timeoutMs = DEFAULT_TIMEOUT_MS);
 
   /**
    * Send an HTTP DELETE with no body, buffering the (small) response into

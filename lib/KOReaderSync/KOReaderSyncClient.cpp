@@ -66,6 +66,12 @@ void applyAuthHeaders(freeink::SecureHttpClient& http) {
   http.addHeader("Authorization", std::string("Basic ") + encoded.c_str());
 }
 
+#ifdef CP_TEST_CONSOLE
+// See KOReaderSyncClient::setTestBlackHoleOverride()'s header comment.
+bool testBlackHoleOverride = false;
+constexpr char TEST_BLACK_HOLE_BASE_URL[] = "https://192.0.2.1";
+#endif
+
 // True when free heap is too low to risk a TLS handshake.
 bool insufficientHeap() {
   const uint32_t freeHeap = ESP.getFreeHeap();
@@ -246,14 +252,20 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
   return SERVER_ERROR;
 }
 
-KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgress& progress) {
+KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgress& progress,
+                                                             const uint32_t timeoutMs) {
   lastHttpCode = 0;
   if (!KOREADER_STORE.hasEffectiveCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
     return NO_CREDENTIALS;
   }
 
+#ifdef CP_TEST_CONSOLE
+  const std::string url = (testBlackHoleOverride ? TEST_BLACK_HOLE_BASE_URL : KOREADER_STORE.effectiveBaseUrl()) +
+                          std::string("/syncs/progress");
+#else
   const std::string url = KOREADER_STORE.effectiveBaseUrl() + "/syncs/progress";
+#endif
   LOG_DBG("KOSync", "Updating progress: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
   if (insufficientHeap()) return LOW_MEMORY;
 
@@ -289,6 +301,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   LOG_DBG("KOSync", "Request body: %s", body.c_str());
 
   freeink::SecureHttpClient http;
+  http.setTimeout(timeoutMs);
   http.setInsecure();
   if (!http.begin(url)) {
     LOG_ERR("KOSync", "Bad URL: %s", url.c_str());
@@ -334,3 +347,7 @@ const char* KOReaderSyncClient::errorString(Error error) {
       return "Unknown error";
   }
 }
+
+#ifdef CP_TEST_CONSOLE
+void KOReaderSyncClient::setTestBlackHoleOverride(const bool enabled) { testBlackHoleOverride = enabled; }
+#endif

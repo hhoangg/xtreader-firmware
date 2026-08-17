@@ -13,7 +13,7 @@ namespace telemetry {
 
 namespace {
 
-TelemetryResult post(const std::string& path, const std::string& body) {
+TelemetryResult post(const std::string& path, const std::string& body, const uint32_t timeoutMs) {
   TelemetryResult result;
   if (!SYNC_STORE.isPaired()) {
     result.error = "not_paired";
@@ -22,7 +22,8 @@ TelemetryResult post(const std::string& path, const std::string& body) {
 
   const std::string url = SYNC_STORE.getBaseUrl() + path;
   std::string response;
-  const bool ok = HttpDownloader::postJson(url, body, response, &result.httpStatus, SYNC_STORE.getAccessToken());
+  const bool ok =
+      HttpDownloader::postJson(url, body, response, &result.httpStatus, SYNC_STORE.getAccessToken(), timeoutMs);
 
   // outStatus is left at its initial -1 only on a connect/TLS/DNS failure
   // that never got an HTTP response at all (see postJson's doc comment) --
@@ -49,7 +50,7 @@ TelemetryResult post(const std::string& path, const std::string& body) {
 
 }  // namespace
 
-TelemetryResult sendHeartbeat(const HeartbeatInfo& info) {
+TelemetryResult sendHeartbeat(const HeartbeatInfo& info, const uint32_t timeoutMs) {
   JsonDocument doc;
   doc["firmwareVersion"] = CROSSPOINT_VERSION;
   if (info.batteryPercent >= 0) doc["batteryPercent"] = info.batteryPercent;
@@ -61,7 +62,7 @@ TelemetryResult sendHeartbeat(const HeartbeatInfo& info) {
 
   std::string body;
   serializeJson(doc, body);
-  return post("/devices/heartbeat", body);
+  return post("/devices/heartbeat", body, timeoutMs);
 }
 
 HeartbeatInfo currentDeviceHeartbeatInfo() {
@@ -73,9 +74,9 @@ HeartbeatInfo currentDeviceHeartbeatInfo() {
   return info;
 }
 
-TelemetryResult requestBooks() { return post("/feedback/request-books", ""); }
+TelemetryResult requestBooks(const uint32_t timeoutMs) { return post("/feedback/request-books", "", timeoutMs); }
 
-TelemetryResult bookFinished(const std::string& bookId, const std::string& documentHash) {
+TelemetryResult bookFinished(const std::string& bookId, const std::string& documentHash, const uint32_t timeoutMs) {
   JsonDocument doc;
   if (!bookId.empty()) {
     doc["bookId"] = bookId;
@@ -84,7 +85,7 @@ TelemetryResult bookFinished(const std::string& bookId, const std::string& docum
   }
   std::string body;
   serializeJson(doc, body);
-  return post("/events/book-finished", body);
+  return post("/events/book-finished", body, timeoutMs);
 }
 
 }  // namespace telemetry

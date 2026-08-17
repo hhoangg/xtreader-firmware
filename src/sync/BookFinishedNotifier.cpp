@@ -3,6 +3,7 @@
 #include <Logging.h>
 
 #include "SyncManifest.h"
+#include "SyncTriggerPolicy.h"
 #include "Telemetry.h"
 
 namespace book_finished_notifier {
@@ -21,7 +22,10 @@ bool tryDeliver(const std::string& bookPath) {
     return true;
   }
 
-  const telemetry::TelemetryResult result = telemetry::bookFinished(id);
+  // Always the automatic HomeActivity path (see this file's header comment)
+  // -- nobody is watching a popup for this, so bound it short rather than
+  // the ~15s an explicit action can reasonably ask the reader to wait for.
+  const telemetry::TelemetryResult result = telemetry::bookFinished(id, "", sync_trigger::AUTO_SYNC_TIMEOUT_MS);
   if (!result.ok) {
     LOG_ERR("BOOKFIN", "book-finished event failed for %s (error=%s status=%d) -- will retry on a later visit",
             bookPath.c_str(), result.error.c_str(), result.httpStatus);

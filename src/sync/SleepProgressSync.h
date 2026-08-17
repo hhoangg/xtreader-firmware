@@ -35,9 +35,12 @@ namespace sleep_progress_sync {
 // noticeable stall; see SleepWifiBackoffPolicy.h for what happens on repeat
 // failure, and SleepProgressSync.cpp's powerButtonPressedAgain() for the
 // escape hatch if even this is too long for a given moment. The KOSync
-// upload itself (KOReaderSyncClient::updateProgress()) adds its own ~15s
-// wolfSSL handshake deadline on top of this when WiFi does connect --
-// unchanged by this task, see its report for why.
+// upload itself (KOReaderSyncClient::updateProgress()) adds its own deadline
+// on top of this once WiFi associates -- SyncTriggerPolicy.h's
+// AUTO_SYNC_TIMEOUT_MS, not KOReaderSyncClient's ~15s explicit-action
+// default: association alone does not prove the internet behind it works (a
+// captive portal answers it too), so this stays short instead of trusting
+// WiFi.status() the way the first version of this fix did.
 constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 2500;
 
 // Brings WiFi up (bounded by WIFI_CONNECT_TIMEOUT_MS, subject to
@@ -66,6 +69,18 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress);
 // testConsoleSleepSyncBench() for the JSON this and trySyncBeforeSleep()'s
 // own [TEST] stage lines report.
 bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress);
+
+// CMD:CAPTIVEPORTALBENCH -- runs the exact same trySyncBeforeSleep() above
+// against real, working Wi-Fi (association succeeds normally), but diverts
+// the KOSync upload's target to a black-holed test address instead of the
+// real server -- standing in for a captive portal or a server that accepts
+// the connection and never answers, the case WIFI_CONNECT_TIMEOUT_MS/
+// CMD:SLEEPSYNCBENCH above do not exercise (those cover "no Wi-Fi in
+// range", not "Wi-Fi is fine, the internet behind it is not"). See
+// KOReaderSyncClient::setTestBlackHoleOverride() and main.cpp's
+// testConsoleCaptivePortalBench() for the JSON this and
+// trySyncBeforeSleep()'s own [TEST] stage lines report.
+bool benchTrySyncAgainstBlackHole(const KOReaderProgress& progress);
 #endif
 
 }  // namespace sleep_progress_sync

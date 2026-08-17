@@ -25,11 +25,6 @@ namespace {
 constexpr int HTTP_RX_BUF = 2048;
 constexpr int HTTP_TX_BUF = 512;
 #endif
-// Per-socket-op timeout. Some OPDS download endpoints are slow to send headers
-// (>15s) and chunked catalogs stall mid-body, so 15s killed them. 60s gives
-// slow servers room. esp_http_client's timeout_ms is uint32, so unlike Arduino
-// HTTPClient's uint16 setTimeout it doesn't silently truncate.
-constexpr int HTTP_TIMEOUT_MS = 60000;
 constexpr size_t READ_CHUNK = 1024;
 constexpr int MAX_REDIRECTS = 5;
 
@@ -48,12 +43,13 @@ bool isRedirect(int status) {
 
 #if defined(FREEINK_NET_WOLFSSL)
 HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std::string& username,
-                                         const std::string& password, const std::string& bearerToken, Sink& sink) {
+                                         const std::string& password, const std::string& bearerToken, Sink& sink,
+                                         uint32_t timeoutMs) {
   std::string url = startUrl;
 
   for (int hop = 0; hop <= MAX_REDIRECTS; ++hop) {
     freeink::SecureHttpClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setTimeout(timeoutMs);
     http.setInsecure();
     if (!http.begin(url)) {
       LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
@@ -124,12 +120,12 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
 // that ends early as ESP_ERR_HTTP_INCOMPLETE_DATA, whereas the read loop streams
 // large/slow files and surfaces a short read directly.
 HttpDownloader::DownloadError runGet(const std::string& url, const std::string& username, const std::string& password,
-                                     const std::string& bearerToken, Sink& sink) {
+                                     const std::string& bearerToken, Sink& sink, uint32_t timeoutMs) {
   esp_http_client_config_t config = {};
   config.url = url.c_str();
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
-  config.timeout_ms = HTTP_TIMEOUT_MS;
+  config.timeout_ms = static_cast<int>(timeoutMs);
   // Verify HTTPS against the bundled CA roots. This build has esp-tls
   // CONFIG_ESP_TLS_INSECURE off, so an unverified TLS handshake can't be set
   // up at all; the model is public servers over verified https and local
@@ -239,9 +235,9 @@ HttpDownloader::DownloadError runGet(const std::string& url, const std::string& 
 // API's POST endpoints never redirect, and the whole response is small
 // enough to buffer via SecureHttpClient's own getString().
 HttpDownloader::DownloadError runPostWolf(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                                          int* outStatus, const std::string& bearerToken) {
+                                          int* outStatus, const std::string& bearerToken, uint32_t timeoutMs) {
   freeink::SecureHttpClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setTimeout(timeoutMs);
   http.setInsecure();
   if (!http.begin(url)) {
     LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
@@ -272,7 +268,7 @@ HttpDownloader::DownloadError runPostWolf(const std::string& url, const std::str
 HttpDownloader::DownloadError runDeleteWolf(const std::string& url, std::string& outResponse, int* outStatus,
                                             const std::string& bearerToken) {
   freeink::SecureHttpClient http;
-  http.setTimeout(HTTP_TIMEOUT_MS);
+  http.setTimeout(HttpDownloader::DEFAULT_TIMEOUT_MS);
   http.setInsecure();
   if (!http.begin(url)) {
     LOG_ERR("HTTP", "wolfSSL bad URL: %s", url.c_str());
@@ -300,13 +296,13 @@ HttpDownloader::DownloadError runDeleteWolf(const std::string& url, std::string&
 // instead of esp_http_client_perform() so the body is read directly into
 // outResponse without needing an HTTP_EVENT_ON_DATA handler.
 HttpDownloader::DownloadError runPost(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                                      int* outStatus, const std::string& bearerToken) {
+                                      int* outStatus, const std::string& bearerToken, uint32_t timeoutMs) {
   esp_http_client_config_t config = {};
   config.url = url.c_str();
   config.method = HTTP_METHOD_POST;
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
-  config.timeout_ms = HTTP_TIMEOUT_MS;
+  config.timeout_ms = static_cast<int>(timeoutMs);
   config.crt_bundle_attach = esp_crt_bundle_attach;
   config.keep_alive_enable = true;
 
@@ -372,7 +368,7 @@ HttpDownloader::DownloadError runDelete(const std::string& url, std::string& out
   config.method = HTTP_METHOD_DELETE;
   config.buffer_size = HTTP_RX_BUF;
   config.buffer_size_tx = HTTP_TX_BUF;
-  config.timeout_ms = HTTP_TIMEOUT_MS;
+  config.timeout_ms = static_cast<int>(HttpDownloader::DEFAULT_TIMEOUT_MS);
   config.crt_bundle_attach = esp_crt_bundle_attach;
   config.keep_alive_enable = true;
 
@@ -427,11 +423,12 @@ HttpDownloader::DownloadError runDelete(const std::string& url, std::string& out
 // mbedTLS path fails to connect or stalls mid-stream. Plain-http URLs still use a
 // WiFiClient inside runGetWolf, so this is safe for non-TLS targets too.
 HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::string& username,
-                                           const std::string& password, const std::string& bearerToken, Sink& sink) {
+                                           const std::string& password, const std::string& bearerToken, Sink& sink,
+                                           uint32_t timeoutMs = HttpDownloader::DEFAULT_TIMEOUT_MS) {
 #if defined(FREEINK_NET_WOLFSSL)
-  return runGetWolf(url, username, password, bearerToken, sink);
+  return runGetWolf(url, username, password, bearerToken, sink, timeoutMs);
 #else
-  return runGet(url, username, password, bearerToken, sink);
+  return runGet(url, username, password, bearerToken, sink, timeoutMs);
 #endif
 }
 
@@ -466,22 +463,23 @@ bool HttpDownloader::fetchUrl(const std::string& url, std::string& outContent, c
 }
 
 bool HttpDownloader::fetchUrl(const std::string& url, const DataCallback& onData, const std::string& username,
-                              const std::string& password, int* outStatus, const std::string& bearerToken) {
+                              const std::string& password, int* outStatus, const std::string& bearerToken,
+                              uint32_t timeoutMs) {
   LOG_DBG("HTTP", "Fetching: %s", url.c_str());
   Sink sink;
   sink.write = onData;
   sink.statusOut = outStatus;
-  return runGetSecure(url, username, password, bearerToken, sink) == OK;
+  return runGetSecure(url, username, password, bearerToken, sink, timeoutMs) == OK;
 }
 
 bool HttpDownloader::postJson(const std::string& url, const std::string& jsonBody, std::string& outResponse,
-                              int* outStatus, const std::string& bearerToken) {
+                              int* outStatus, const std::string& bearerToken, uint32_t timeoutMs) {
   LOG_DBG("HTTP", "POST: %s (%zu byte body)", url.c_str(), jsonBody.size());
   outResponse.clear();
 #if defined(FREEINK_NET_WOLFSSL)
-  return runPostWolf(url, jsonBody, outResponse, outStatus, bearerToken) == OK;
+  return runPostWolf(url, jsonBody, outResponse, outStatus, bearerToken, timeoutMs) == OK;
 #else
-  return runPost(url, jsonBody, outResponse, outStatus, bearerToken) == OK;
+  return runPost(url, jsonBody, outResponse, outStatus, bearerToken, timeoutMs) == OK;
 #endif
 }
 

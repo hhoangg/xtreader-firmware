@@ -10,8 +10,10 @@ State afterSkippedAttempt(const State& state) {
   return next;
 }
 
-State afterAttempt(const State& state, const bool wifiConnected) {
-  if (wifiConnected) return State{};  // reset entirely on any successful join
+bool reachedNetwork(const bool wifiConnected, const bool transportFailed) { return wifiConnected && !transportFailed; }
+
+State afterAttempt(const State& state, const bool reached) {
+  if (reached) return State{};  // reset entirely once the network was actually reached
 
   State next = state;
   if (next.consecutiveFailures < MAX_SKIP) next.consecutiveFailures++;

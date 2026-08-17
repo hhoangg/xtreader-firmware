@@ -34,10 +34,26 @@ bool shouldAttempt(const State& state);
 // skipped: consumes one skip, nothing else changes.
 State afterSkippedAttempt(const State& state);
 
-// State to persist after an attempt actually ran. wifiConnected must reflect
-// whether a saved network was actually joined -- NOT whether the progress
-// upload itself succeeded. A reachable network with a failed upload is a
-// server problem, not a "no Wi-Fi here" problem, and must not back off.
-State afterAttempt(const State& state, bool wifiConnected);
+// True if this attempt reached the network at all: Wi-Fi associated AND the
+// KOSync upload that followed did not fail at the transport level.
+// `transportFailed` is the caller's own check of
+// KOReaderSyncClient::updateProgress()'s result against NETWORK_ERROR
+// specifically (see SleepProgressSync.cpp) -- any other outcome (AUTH_FAILED,
+// SERVER_ERROR, ...) still proves a real HTTP response came back, i.e. the
+// network was fine and only the account/server was not, so it must not count
+// here. A captive portal or black-holed server -- associates, then the
+// upload times out -- looks exactly like "no Wi-Fi here" through this
+// function, which is the point: see this task's report for why WiFi
+// association alone is not a reliable signal. Kept as two plain bools
+// (rather than depending on KOReaderSyncClient's Error enum here) so this
+// stays host-testable without pulling ESP-IDF/Arduino into this library.
+bool reachedNetwork(bool wifiConnected, bool transportFailed);
+
+// State to persist after an attempt actually ran. `reached` should be
+// reachedNetwork()'s result above -- NOT whether the progress upload's HTTP
+// response was itself successful. A reachable network with an HTTP-level
+// failure (auth, server error) is an account/server problem, not a "no
+// Wi-Fi here" problem, and must not back off.
+State afterAttempt(const State& state, bool reached);
 
 }  // namespace sleep_wifi_backoff
