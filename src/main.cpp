@@ -1022,8 +1022,20 @@ static void testConsoleManifestRemove(const std::string& id) {
 // index (e.g. a non-ASCII name like "Văn học") rendering empty when opened -- only manifests
 // against real SdFat directory I/O (USE_UTF8_LONG_NAMES=1) and a real on-SD index; the host-side
 // FileBrowserMerge tests exercise the same merge logic with in-memory strings, which cannot catch
-// an SD- or encoding-specific regression. Reports every merged entry (name + remoteId, matching
-// file_browser_merge::MergedEntry) as one [TEST] JSON line.
+// an SD- or encoding-specific regression.
+//
+// Reports one [TEST] JSON line per merged entry (name + remoteId, matching
+// file_browser_merge::MergedEntry), bracketed by a "browse_folder_start"
+// header line (hasLocalDir/scanOk/count) and a "browse_folder_done"
+// trailer -- not one giant line with every entry inlined into an array, as
+// this used to. A folder with enough entries (18 was enough to reproduce)
+// produced a single println() call several KB long, and the tail of that
+// line came back corrupted over the USB-CDC link -- mid-token, e.g.
+// `"name":"...epub","rem","remoteId":""` -- making the output invalid JSON
+// exactly when a folder is large enough to be interesting. Each line here
+// is a handful of bytes for one entry, well clear of whatever limit that
+// was, and matches the multi-line [TEST] pattern SleepProgressSync.cpp's
+// own diagnostics already use (logHeapJson/logStageJson).
 static void testConsoleBrowseFolder(const std::string& path) {
   std::string prefix = path;
   if (prefix.empty() || prefix.back() != '/') prefix += "/";
@@ -1059,23 +1071,28 @@ static void testConsoleBrowseFolder(const std::string& path) {
   const bool scanOk = sync_manifest::listByPrefix(prefix, onMatch, &merge);
 
   const auto& entries = merge.entries();
-  String out = "[TEST] {\"hasLocalDir\":";
-  out += (hasLocalDir ? "true" : "false");
-  out += ",\"scanOk\":";
-  out += (scanOk ? "true" : "false");
-  out += ",\"count\":";
-  out += String(static_cast<unsigned>(entries.size()));
-  out += ",\"entries\":[";
+
+  String header = "[TEST] {\"stage\":\"browse_folder_start\",\"hasLocalDir\":";
+  header += (hasLocalDir ? "true" : "false");
+  header += ",\"scanOk\":";
+  header += (scanOk ? "true" : "false");
+  header += ",\"count\":";
+  header += String(static_cast<unsigned>(entries.size()));
+  header += "}";
+  logSerial.println(header);
+
   for (size_t i = 0; i < entries.size(); i++) {
-    if (i > 0) out += ",";
-    out += "{\"name\":";
-    appendJsonEscaped(out, entries[i].name.data(), entries[i].name.size());
-    out += ",\"remoteId\":";
-    appendJsonEscaped(out, entries[i].remoteId.data(), entries[i].remoteId.size());
-    out += "}";
+    String line = "[TEST] {\"stage\":\"browse_folder_entry\",\"index\":";
+    line += String(static_cast<unsigned>(i));
+    line += ",\"name\":";
+    appendJsonEscaped(line, entries[i].name.data(), entries[i].name.size());
+    line += ",\"remoteId\":";
+    appendJsonEscaped(line, entries[i].remoteId.data(), entries[i].remoteId.size());
+    line += "}";
+    logSerial.println(line);
   }
-  out += "]}";
-  logSerial.println(out);
+
+  logSerial.println("[TEST] {\"stage\":\"browse_folder_done\"}");
 }
 
 // CMD:BOOKDOWNLOAD <id> -- probes GET /library/:id/file end to end (the

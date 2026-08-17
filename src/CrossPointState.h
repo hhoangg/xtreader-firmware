@@ -38,13 +38,19 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // this task's report for why that bounded loss is an acceptable trade.
   std::string pendingBookFinishedPath;
 
-  // Back-off state for enterDeepSleep()'s headless before-sleep Wi-Fi
-  // attempt -- see lib/SyncManifest/SleepWifiBackoffPolicy.h for the
-  // schedule these two fields drive. Persisted here (rather than a plain
-  // static) because deep sleep is a full chip reset: nothing in RAM survives
-  // a wake, but this file does, and it is already saved unconditionally by
-  // the same APP_STATE.saveToFile() call enterDeepSleep() makes for
-  // showBootScreen, so tracking the back-off here costs no extra SD write.
+  // Back-off state shared by enterDeepSleep()'s headless before-sleep Wi-Fi
+  // attempt AND HomeActivity's once-per-boot library-screen Wi-Fi bring-up
+  // (see src/sync/SleepProgressSync.h's loadWifiBackoffState()/
+  // saveWifiBackoffState()) -- both are "is there Wi-Fi here" attempts
+  // against the same saved credentials, so they share one counter rather
+  // than each paying the back-off cost separately. See
+  // lib/SyncManifest/SleepWifiBackoffPolicy.h for the schedule these two
+  // fields drive. Persisted here (rather than a plain static) because deep
+  // sleep is a full chip reset: nothing in RAM survives a wake, but this
+  // file does. The sleep path's save is free (piggybacks on the
+  // APP_STATE.saveToFile() call enterDeepSleep() already makes for
+  // showBootScreen); the library-screen path's save is its own SD write,
+  // but only when this state actually changes and at most once per boot.
   uint8_t sleepWifiConsecutiveFailures = 0;
   uint8_t sleepWifiSkipsRemaining = 0;
 

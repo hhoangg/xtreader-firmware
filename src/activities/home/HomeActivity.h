@@ -78,10 +78,13 @@ class HomeActivity final : public Activity {
   void loadRecentCovers(int coverHeight);
   // Automatic "check whether there are new files" sync: runs at most once
   // per boot, the first time the library screen is reached, and only if
-  // already paired and WiFi is already connected (see
-  // lib/SyncManifest/SyncTriggerPolicy.h for the exact rule and why). Called
-  // from render(), right after the recent-covers loading stage, on the same
-  // "blocking with a visible popup" pattern loadRecentCovers() itself uses.
+  // already paired (see lib/SyncManifest/SyncTriggerPolicy.h for the exact
+  // rules). If WiFi is not already connected, this brings it up itself
+  // first -- bounded, back-off shared with the before-sleep sync (see
+  // src/sync/SleepProgressSync.h) -- before checking whether to run the
+  // sync itself. Called from render(), right after the recent-covers
+  // loading stage, on the same "blocking with a visible popup" pattern
+  // loadRecentCovers() itself uses.
   void trySyncLibrary();
   // Delivers CrossPointState::pendingBookFinishedPath, if there is one and
   // conditions allow (see SyncTriggerPolicy.h's

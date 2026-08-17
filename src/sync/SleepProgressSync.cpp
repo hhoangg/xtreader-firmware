@@ -24,22 +24,6 @@ namespace {
 // cannot alone burn the whole budget and leave no time to try a second one.
 constexpr unsigned long PER_NETWORK_TIMEOUT_MS = 1500;
 
-sleep_wifi_backoff::State loadBackoffState() {
-  return {APP_STATE.sleepWifiConsecutiveFailures, APP_STATE.sleepWifiSkipsRemaining};
-}
-
-// No-op (no SD write) when the state did not actually change, e.g. an
-// already-clean device that skipped straight past the backoff check.
-void saveBackoffState(const sleep_wifi_backoff::State& state) {
-  if (APP_STATE.sleepWifiConsecutiveFailures == state.consecutiveFailures &&
-      APP_STATE.sleepWifiSkipsRemaining == state.skipsRemaining) {
-    return;
-  }
-  APP_STATE.sleepWifiConsecutiveFailures = state.consecutiveFailures;
-  APP_STATE.sleepWifiSkipsRemaining = state.skipsRemaining;
-  APP_STATE.saveToFile();
-}
-
 // "Let the power button win" (task brief): a fresh press during the Wi-Fi
 // search is the owner's escape hatch if this ever takes longer than they are
 // willing to wait, regardless of budget/back-off tuning. gpio.update() is
@@ -94,7 +78,20 @@ bool benchForceBogusNetwork = false;
 constexpr char BENCH_BOGUS_SSID[] = "CP-BENCH-UNREACHABLE-NETWORK";
 #endif
 
-bool connectToSavedWifi(bool& cancelled) {
+#ifdef CP_TEST_CONSOLE
+void logHeapJson(const char* when) {
+  logSerial.printf("[TEST] {\"stage\":\"sleep_sync_heap\",\"when\":\"%s\",\"freeHeap\":%u,\"maxAllocHeap\":%u}\n", when,
+                   static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+}
+
+void logStageJson(const char* stage, unsigned long elapsedMs) {
+  logSerial.printf("[TEST] {\"stage\":\"%s\",\"elapsedMs\":%lu}\n", stage, elapsedMs);
+}
+#endif
+
+}  // namespace
+
+bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock) {
   if (WiFi.status() == WL_CONNECTED) return true;
 
   WiFi.mode(WIFI_STA);
@@ -110,16 +107,20 @@ bool connectToSavedWifi(bool& cancelled) {
   }
 #endif
 
-  {
-    // SD card access shares SPI with the display; matches
-    // WifiSelectionActivity::onEnter()'s use of the same lock.
+  // SD card access shares SPI with the display; matches
+  // WifiSelectionActivity::onEnter()'s use of the same lock. Skipped when
+  // the caller already holds it -- see this function's header comment for
+  // why re-taking it here would deadlock that caller's task against itself.
+  if (callerHoldsRenderLock) {
+    WIFI_STORE.loadFromFile();
+  } else {
     RenderLock lock;
     WIFI_STORE.loadFromFile();
   }
 
   const size_t savedCount = WIFI_STORE.getCredentialCount();
   if (savedCount == 0) {
-    LOG_DBG("SLPSYNC", "No saved WiFi credentials, skipping before-sleep sync");
+    LOG_DBG("SLPSYNC", "No saved WiFi credentials, skipping WiFi bring-up");
     return false;
   }
 
@@ -144,18 +145,21 @@ bool connectToSavedWifi(bool& cancelled) {
   return false;
 }
 
-#ifdef CP_TEST_CONSOLE
-void logHeapJson(const char* when) {
-  logSerial.printf("[TEST] {\"stage\":\"sleep_sync_heap\",\"when\":\"%s\",\"freeHeap\":%u,\"maxAllocHeap\":%u}\n", when,
-                   static_cast<unsigned>(ESP.getFreeHeap()), static_cast<unsigned>(ESP.getMaxAllocHeap()));
+sleep_wifi_backoff::State loadWifiBackoffState() {
+  return {APP_STATE.sleepWifiConsecutiveFailures, APP_STATE.sleepWifiSkipsRemaining};
 }
 
-void logStageJson(const char* stage, unsigned long elapsedMs) {
-  logSerial.printf("[TEST] {\"stage\":\"%s\",\"elapsedMs\":%lu}\n", stage, elapsedMs);
+// No-op (no SD write) when the state did not actually change, e.g. an
+// already-clean device that skipped straight past the backoff check.
+void saveWifiBackoffState(const sleep_wifi_backoff::State& state) {
+  if (APP_STATE.sleepWifiConsecutiveFailures == state.consecutiveFailures &&
+      APP_STATE.sleepWifiSkipsRemaining == state.skipsRemaining) {
+    return;
+  }
+  APP_STATE.sleepWifiConsecutiveFailures = state.consecutiveFailures;
+  APP_STATE.sleepWifiSkipsRemaining = state.skipsRemaining;
+  APP_STATE.saveToFile();
 }
-#endif
-
-}  // namespace
 
 bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 #ifdef CP_TEST_CONSOLE
@@ -163,12 +167,12 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
   const unsigned long overallStart = millis();
 #endif
 
-  const sleep_wifi_backoff::State backoffState = loadBackoffState();
+  const sleep_wifi_backoff::State backoffState = loadWifiBackoffState();
   if (!sleep_wifi_backoff::shouldAttempt(backoffState)) {
     LOG_DBG("SLPSYNC",
             "Skipping before-sleep Wi-Fi attempt: backed off (%u skip(s) left after %u consecutive failure(s))",
             backoffState.skipsRemaining, backoffState.consecutiveFailures);
-    saveBackoffState(sleep_wifi_backoff::afterSkippedAttempt(backoffState));
+    saveWifiBackoffState(sleep_wifi_backoff::afterSkippedAttempt(backoffState));
 #ifdef CP_TEST_CONSOLE
     logStageJson("sleep_sync_backed_off", millis() - overallStart);
 #endif
@@ -179,7 +183,9 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
   const unsigned long wifiStart = millis();
 #endif
   bool cancelled = false;
-  const bool wifiConnected = connectToSavedWifi(cancelled);
+  // Runs on the main/loop task (enterDeepSleep() -> here), never the render
+  // task -- see connectToSavedWifi()'s header comment for why this matters.
+  const bool wifiConnected = connectToSavedWifi(cancelled, /*callerHoldsRenderLock=*/false);
 #ifdef CP_TEST_CONSOLE
   logStageJson("sleep_sync_wifi", millis() - wifiStart);
 #endif
@@ -193,7 +199,7 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 
   if (!wifiConnected) {
     LOG_DBG("SLPSYNC", "No WiFi for before-sleep sync; progress goes up another time");
-    saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, false));
+    saveWifiBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, false));
 #ifdef CP_TEST_CONSOLE
     logHeapJson("no_wifi");
 #endif
@@ -234,7 +240,7 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
   // the network itself was fine, so it must not earn a skip -- see
   // SleepWifiBackoffPolicy.h's reachedNetwork().
   const bool reached = sleep_wifi_backoff::reachedNetwork(wifiConnected, result == KOReaderSyncClient::NETWORK_ERROR);
-  saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, reached));
+  saveWifiBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, reached));
 
   if (!reached) {
     // The heartbeat below would hit the same unreachable network the upload

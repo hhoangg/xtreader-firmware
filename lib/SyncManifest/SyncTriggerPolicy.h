@@ -12,9 +12,10 @@
 //
 // The constraints this encodes, from the task brief:
 //  - Never before the device is paired -- nothing to sync otherwise.
-//  - Never by bringing WiFi up itself: only fires when WiFi is already
-//    connected. Auto-connecting on every visit to the library screen would
-//    wake radio + battery on a device meant to sit idle for days.
+//  - shouldAutoSync() itself never brings WiFi up: it only fires when WiFi
+//    is already connected. Bringing WiFi up first, bounded and only when
+//    paired, is shouldAttemptLibraryWifiConnect()'s job below -- see that
+//    function for why a bounded bring-up is now worth the cost.
 //  - At most once per boot: `alreadyAttemptedThisBoot` is the caller's own
 //    one-shot latch (a plain static, reset only by a reboot -- which this
 //    device also goes through on every sleep wake, so "once per boot" and
@@ -55,6 +56,35 @@ constexpr uint32_t AUTO_SYNC_TIMEOUT_MS = 3000;
 constexpr uint32_t EXPLICIT_SYNC_TIMEOUT_MS = 15000;
 
 bool shouldAutoSync(bool paired, bool wifiConnected, bool alreadyAttemptedThisBoot);
+
+// Pure decision for "should the library screen bring WiFi up itself, right
+// now, so shouldAutoSync() above has a chance to fire?" -- HomeActivity
+// calls this FIRST, and only if it says yes brings WiFi up itself (bounded,
+// back-off shared with the sleep path -- see
+// src/sync/SleepProgressSync.h's connectToSavedWifi()/loadWifiBackoffState()/
+// saveWifiBackoffState() and lib/SyncManifest/SleepWifiBackoffPolicy.h)
+// before re-checking shouldAutoSync() with whatever WiFi.status() is
+// afterward.
+//
+// This supersedes shouldAutoSync()'s original "never bring WiFi up itself"
+// rule: on a device that reboots on every sleep wake, that rule meant the
+// automatic sync never ran in production at all (nothing else ever
+// connects WiFi -- see this task's report). The radio-up cost is now
+// bounded (WIFI_CONNECT_TIMEOUT_MS, decaying to nothing via the shared
+// back-off once repeated attempts find nothing), which is smaller than the
+// feature not working.
+//  - paired: identical to shouldAutoSync's own check -- nothing to sync for
+//    an unpaired device, so no reason to ever wake the radio.
+//  - wifiConnected: if WiFi is already up (whatever brought it up), there is
+//    nothing to gain from a bring-up attempt.
+//  - alreadyAttemptedThisBoot: once per boot, same granularity and static
+//    latch pattern as shouldAutoSync's own -- a failed/backed-off Wi-Fi
+//    search is a blocking, watchdog-relevant cost on the render task, and
+//    the fact "is there Wi-Fi in range" does not change between one Home
+//    visit and the next within the same boot, so retrying it on every visit
+//    (e.g. bouncing in and out of File Browser) would pay that cost
+//    repeatedly for no new information -- see this task's report.
+bool shouldAttemptLibraryWifiConnect(bool paired, bool wifiConnected, bool alreadyAttemptedThisBoot);
 
 // Pure decision for "should the deferred book-finished event be delivered
 // right now?" -- same shape as shouldAutoSync() and the same reasoning for

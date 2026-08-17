@@ -6,6 +6,10 @@ bool shouldAutoSync(const bool paired, const bool wifiConnected, const bool alre
   return paired && wifiConnected && !alreadyAttemptedThisBoot;
 }
 
+bool shouldAttemptLibraryWifiConnect(const bool paired, const bool wifiConnected, const bool alreadyAttemptedThisBoot) {
+  return paired && !wifiConnected && !alreadyAttemptedThisBoot;
+}
+
 bool shouldDeliverPendingBookFinished(const bool hasPending, const bool paired, const bool wifiConnected,
                                       const bool alreadyAttemptedThisVisit) {
   return hasPending && paired && wifiConnected && !alreadyAttemptedThisVisit;

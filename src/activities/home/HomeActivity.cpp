@@ -21,22 +21,29 @@
 #include "MappedInputManager.h"
 #include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
+#include "SleepWifiBackoffPolicy.h"
 #include "SyncCredentialStore.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
 #include "sync/BookFinishedNotifier.h"
+#include "sync/SleepProgressSync.h"
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
 
 namespace {
-// Once-per-boot latch for trySyncLibrary(): HomeActivity is destroyed and
+// Once-per-boot latches for trySyncLibrary(): HomeActivity is destroyed and
 // recreated every time the library screen is (re-)entered (goHome() calls
 // ActivityManager::replaceActivity()), so a member flag would reset on every
-// visit; this plain static survives across those instances and resets only
+// visit; these plain statics survive across those instances and reset only
 // on a real reboot -- which this device also goes through on every sleep
 // wake (see SyncTriggerPolicy.h), so "once per boot" and "once per wake"
 // are the same event here.
 bool manifestSyncAttemptedThisBoot = false;
+// Gates the Wi-Fi bring-up itself (see shouldAttemptLibraryWifiConnect()),
+// separate from manifestSyncAttemptedThisBoot above: a device that is
+// already connected on its first Home visit never needs a bring-up attempt
+// at all, but must still gate the sync itself the usual way.
+bool libraryWifiConnectAttemptedThisBoot = false;
 }  // namespace
 
 int HomeActivity::getMenuItemCount() const {
@@ -402,17 +409,73 @@ void HomeActivity::render(RenderLock&&) {
 }
 
 void HomeActivity::trySyncLibrary() {
-  if (!sync_trigger::shouldAutoSync(SYNC_STORE.isPaired(), WiFi.status() == WL_CONNECTED,
-                                    manifestSyncAttemptedThisBoot)) {
+  bool wifiConnected = WiFi.status() == WL_CONNECTED;
+
+  // The bring-up itself: once per boot, only when paired and not already
+  // connected (see SyncTriggerPolicy.h's shouldAttemptLibraryWifiConnect()
+  // for why this is now worth doing -- nothing else in a production build
+  // ever connects WiFi, so without this the automatic sync below never runs
+  // at all). `justAttemptedBringUp` tracks whether THIS call performed the
+  // attempt, so the back-off update after the sync below only fires for an
+  // attempt this function actually made, not for WiFi that happened to
+  // already be up for some unrelated reason.
+  bool justAttemptedBringUp = false;
+  if (sync_trigger::shouldAttemptLibraryWifiConnect(SYNC_STORE.isPaired(), wifiConnected,
+                                                    libraryWifiConnectAttemptedThisBoot)) {
+    libraryWifiConnectAttemptedThisBoot = true;
+
+    const sleep_wifi_backoff::State backoffState = sleep_progress_sync::loadWifiBackoffState();
+    if (!sleep_wifi_backoff::shouldAttempt(backoffState)) {
+      LOG_DBG("HOME", "Skipping library WiFi bring-up: backed off (%u skip(s) left after %u consecutive failure(s))",
+              backoffState.skipsRemaining, backoffState.consecutiveFailures);
+      sleep_progress_sync::saveWifiBackoffState(sleep_wifi_backoff::afterSkippedAttempt(backoffState));
+    } else {
+      // Visible while it happens (task brief): same blocking-popup pattern
+      // the sync below already uses, reusing the existing "Connecting to
+      // saved Wi-Fi..." string from the Wi-Fi selection screen rather than
+      // adding a near-duplicate one. Runs from render(), already on the
+      // render task -- no RenderLock needed here, same reasoning as the
+      // sync popup below.
+      GUI.drawPopup(renderer, tr(STR_CONNECTING_SAVED_WIFI));
+      bool cancelled = false;
+      // This runs on the render task, inside HomeActivity::render(), which
+      // already holds ActivityManager's rendering mutex for the whole call
+      // (see ActivityManager::renderTaskLoop()) -- connectToSavedWifi() must
+      // not try to take it again itself, or the render task deadlocks
+      // against itself (renderingMutex is not recursive). See that
+      // function's header comment.
+      wifiConnected = sleep_progress_sync::connectToSavedWifi(cancelled, /*callerHoldsRenderLock=*/true);
+      requestUpdate();  // redraw Home without the popup
+
+      if (cancelled) {
+        // Power button wins, same reasoning as SleepProgressSync.cpp: leave
+        // the back-off state untouched, and don't chase the sync below with
+        // a search that was just deliberately cut short.
+        return;
+      }
+      justAttemptedBringUp = true;
+      if (!wifiConnected) {
+        // No network reached at all -- back off exactly as the sleep path
+        // does when the search itself finds nothing (see
+        // SleepWifiBackoffPolicy.h). The sync below will no-op right after
+        // this (shouldAutoSync requires wifiConnected), so there is no
+        // second, more precise "did we reach the real internet" signal
+        // coming for this attempt.
+        sleep_progress_sync::saveWifiBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, false));
+      }
+      // else: leave the back-off update to the block below, once the
+      // manifest fetch itself proves whether more than just the access
+      // point was reached.
+    }
+  }
+
+  if (!sync_trigger::shouldAutoSync(SYNC_STORE.isPaired(), wifiConnected, manifestSyncAttemptedThisBoot)) {
     return;
   }
   manifestSyncAttemptedThisBoot = true;
 
   // Visible while it happens (task brief): same blocking-popup pattern
-  // loadRecentCovers() already uses above. This runs from render(), already
-  // on the render task, so no RenderLock is needed here (contrast
-  // FileBrowserActivity's force-delete popups, which run from the loop task
-  // and do need one).
+  // loadRecentCovers() already uses above.
   GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
   // Automatic -- nothing the reader explicitly asked for is waiting on this,
   // so bound it short (see SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS): a
@@ -421,6 +484,21 @@ void HomeActivity::trySyncLibrary() {
   const sync_manifest::SyncResult syncResult = sync_manifest::sync(sync_trigger::AUTO_SYNC_TIMEOUT_MS);
   // FileBrowserActivity reads whatever landed on SD; syncResult itself is only used below.
   requestUpdate();  // redraw Home without the popup
+
+  if (justAttemptedBringUp) {
+    // The manifest fetch above is the first real proof this bring-up
+    // reached more than just the access point -- a captive portal
+    // associates too, then this fetch fails exactly like "no Wi-Fi here"
+    // (see SleepWifiBackoffPolicy.h's reachedNetwork() for the same
+    // reasoning on the sleep path, and SyncManifest.cpp for where
+    // "fetch_failed" is set). Any other error (not_paired can't happen here
+    // -- paired was already checked above; sd_write_failed, corrupt_index,
+    // missing_trailer, too_many_pages, rename_failed) still proves a real
+    // response came back, so it must not count as "no Wi-Fi here" either.
+    const bool reached = syncResult.error != "fetch_failed";
+    sleep_progress_sync::saveWifiBackoffState(
+        sleep_wifi_backoff::afterAttempt(sleep_progress_sync::loadWifiBackoffState(), reached));
+  }
 
   // WiFi is already up for the manifest sync above -- one of the two moments
   // (task brief) a heartbeat can ride along without paying its own WiFi cost.

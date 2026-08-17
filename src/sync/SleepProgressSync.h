@@ -19,6 +19,7 @@
 // the position itself was already saved to disk by captureProgressForSleep()
 // regardless of what happens here.
 #include "KOReaderSyncClient.h"
+#include "SleepWifiBackoffPolicy.h"
 
 namespace sleep_progress_sync {
 
@@ -59,6 +60,49 @@ constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 2500;
 // codebase) so the real worst-case memory cost is visible when built with
 // `pio run -e test`. Never logs a token or a sync key.
 bool trySyncBeforeSleep(const KOReaderProgress& progress);
+
+// Bounded Wi-Fi bring-up shared with trySyncBeforeSleep() above: tries the
+// last-connected saved network first (WifiCredentialStore), then every
+// other saved credential in turn, each sliced by its own per-network
+// timeout, all bounded overall by WIFI_CONNECT_TIMEOUT_MS. A no-op
+// returning true immediately if WiFi is already connected. Does not tear
+// WiFi down on failure, and does not touch the back-off state below --
+// callers gate on shouldAttempt()/update via afterAttempt() around this
+// call, same as trySyncBeforeSleep() does internally.
+//
+// Exposed (not file-local) so HomeActivity's once-per-boot library-screen
+// Wi-Fi bring-up (see SyncTriggerPolicy.h's shouldAttemptLibraryWifiConnect())
+// can drive the exact same connect logic instead of a second copy of it --
+// this runs on the render task there, same watchdog-safety reasoning as the
+// sleep path (see tryCredential()'s resetTaskWatchdogIfSubscribed() call in
+// the .cpp).
+//
+// `cancelled` is set if the power button was pressed again during the
+// search -- the owner's escape hatch, same as trySyncBeforeSleep()'s.
+//
+// `callerHoldsRenderLock` must be true when the calling task already holds
+// ActivityManager's rendering mutex for the duration of this call (e.g.
+// HomeActivity::render()'s RenderLock&& parameter -- see
+// ActivityManager::renderTaskLoop(), which holds it across the whole
+// render() call) and false otherwise (e.g. enterDeepSleep(), running on the
+// main/loop task with no lock held). renderingMutex is a plain FreeRTOS
+// mutex, not a recursive one: this function needs it only to guard
+// WifiCredentialStore's SD access (shared SPI bus with the display), and
+// re-taking it from a task that already holds it would deadlock that task
+// against itself forever. When true, this trusts the caller and skips
+// taking its own lock; when false, it takes one around the SD access, same
+// as before this parameter existed.
+bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock);
+
+// Loads/saves the back-off state shared by trySyncBeforeSleep() and
+// HomeActivity's library-screen Wi-Fi bring-up: both are "is there Wi-Fi
+// here" attempts against the same saved credentials, so they share one
+// counter (CrossPointState::sleepWifiConsecutiveFailures/
+// sleepWifiSkipsRemaining) rather than each paying the back-off cost
+// separately -- see SleepWifiBackoffPolicy.h. saveWifiBackoffState() is a
+// no-op (no SD write) when the state did not actually change.
+sleep_wifi_backoff::State loadWifiBackoffState();
+void saveWifiBackoffState(const sleep_wifi_backoff::State& state);
 
 #ifdef CP_TEST_CONSOLE
 // CMD:SLEEPSYNCBENCH -- runs the exact same trySyncBeforeSleep() above, but

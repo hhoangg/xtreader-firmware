@@ -4,6 +4,7 @@
 
 namespace {
 
+using sync_trigger::shouldAttemptLibraryWifiConnect;
 using sync_trigger::shouldAutoSync;
 using sync_trigger::shouldDeliverPendingBookFinished;
 using sync_trigger::shouldSyncBeforeSleep;
@@ -26,6 +27,28 @@ TEST(SyncTriggerPolicy, AtMostOncePerBoot) {
 
 TEST(SyncTriggerPolicy, UnpairedAndDisconnectedAndAlreadyAttemptedStillFalse) {
   EXPECT_FALSE(shouldAutoSync(false, false, true));
+}
+
+TEST(ShouldAttemptLibraryWifiConnect, FiresWhenPairedDisconnectedAndNotYetAttempted) {
+  EXPECT_TRUE(shouldAttemptLibraryWifiConnect(/*paired=*/true, /*wifiConnected=*/false,
+                                              /*alreadyAttemptedThisBoot=*/false));
+}
+
+TEST(ShouldAttemptLibraryWifiConnect, NeverFiresWhenUnpaired) {
+  // An unpaired device must behave exactly as today: no radio, no delay, no indicator.
+  EXPECT_FALSE(shouldAttemptLibraryWifiConnect(false, false, false));
+}
+
+TEST(ShouldAttemptLibraryWifiConnect, NothingToGainWhenAlreadyConnected) {
+  EXPECT_FALSE(shouldAttemptLibraryWifiConnect(true, /*wifiConnected=*/true, false));
+}
+
+TEST(ShouldAttemptLibraryWifiConnect, AtMostOncePerBoot) {
+  EXPECT_FALSE(shouldAttemptLibraryWifiConnect(true, false, /*alreadyAttemptedThisBoot=*/true));
+}
+
+TEST(ShouldAttemptLibraryWifiConnect, UnpairedConnectedAndAlreadyAttemptedStillFalse) {
+  EXPECT_FALSE(shouldAttemptLibraryWifiConnect(false, true, true));
 }
 
 TEST(DeliverPendingBookFinished, DeliversWhenPendingPairedConnectedAndNotYetAttemptedThisVisit) {
