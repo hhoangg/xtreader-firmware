@@ -104,6 +104,17 @@ bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock);
 sleep_wifi_backoff::State loadWifiBackoffState();
 void saveWifiBackoffState(const sleep_wifi_backoff::State& state);
 
+// Clears the back-off outright, for any path that proved the network really
+// works -- not just the two attempts that own the counter. The counter has
+// no time source behind it (see SleepWifiBackoffPolicy.h), so it can only
+// count attempts; a device carried out of range therefore keeps its
+// escalated skip count after the owner comes home, and the next several
+// sleeps still refuse to try even though Wi-Fi is plainly back. A completed
+// round-trip to the server -- an explicit Sync Now, an explicit progress
+// push -- is the strongest available evidence of "there is Wi-Fi here", so
+// it resets the counter rather than being discarded.
+void noteNetworkReached();
+
 #ifdef CP_TEST_CONSOLE
 // CMD:SLEEPSYNCBENCH -- runs the exact same trySyncBeforeSleep() above, but
 // forces the Wi-Fi search to a deliberately unreachable network instead of

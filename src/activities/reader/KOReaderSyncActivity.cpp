@@ -24,6 +24,7 @@
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"  // list icons for the compare rows
 #include "fontIds.h"
+#include "sync/SleepProgressSync.h"
 
 namespace fui = freeink::ui;
 
@@ -379,6 +380,11 @@ void KOReaderSyncActivity::performUpload() {
     requestUpdate();
     return;
   }
+
+  // Same reasoning as SyncSettingsActivity's Sync Now: a completed upload is
+  // proof this location has working Wi-Fi, so clear the shared back-off that
+  // gates the automatic before-sleep upload (SleepProgressSync.h).
+  sleep_progress_sync::noteNetworkReached();
 
   {
     RenderLock lock(*this);

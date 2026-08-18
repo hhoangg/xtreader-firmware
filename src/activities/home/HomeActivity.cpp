@@ -402,6 +402,11 @@ void HomeActivity::render(RenderLock&&) {
   } else if (!recentsLoaded && !recentsLoading) {
     recentsLoading = true;
     loadRecentCovers(metrics.homeCoverHeight);
+    // Unconditional: loadRecentCovers() only requests an update when it had
+    // to generate a thumbnail, so on the common path -- every cover already
+    // cached -- nothing scheduled the next pass and the branch below (the
+    // automatic library sync) was never reached at all.
+    requestUpdate();
   } else {
     trySyncLibrary();
     tryDeliverPendingBookFinished();
@@ -477,11 +482,11 @@ void HomeActivity::trySyncLibrary() {
   // Visible while it happens (task brief): same blocking-popup pattern
   // loadRecentCovers() already uses above.
   GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
-  // Automatic -- nothing the reader explicitly asked for is waiting on this,
-  // so bound it short (see SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS): a
-  // captive portal or black-holed server must not stall the render task
-  // behind the popup above.
-  const sync_manifest::SyncResult syncResult = sync_manifest::sync(sync_trigger::AUTO_SYNC_TIMEOUT_MS);
+  // Bounded, but with its own budget rather than the shorter power-off one --
+  // see SyncTriggerPolicy.h's HOME_SYNC_TIMEOUT_MS for why the two differ.
+  // A captive portal or black-holed server still must not stall the render
+  // task behind the popup above indefinitely.
+  const sync_manifest::SyncResult syncResult = sync_manifest::sync(sync_trigger::HOME_SYNC_TIMEOUT_MS);
   // FileBrowserActivity reads whatever landed on SD; syncResult itself is only used below.
   requestUpdate();  // redraw Home without the popup
 

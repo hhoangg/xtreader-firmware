@@ -161,6 +161,10 @@ void saveWifiBackoffState(const sleep_wifi_backoff::State& state) {
   APP_STATE.saveToFile();
 }
 
+void noteNetworkReached() {
+  saveWifiBackoffState(sleep_wifi_backoff::afterAttempt(loadWifiBackoffState(), /*reached=*/true));
+}
+
 bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 #ifdef CP_TEST_CONSOLE
   logHeapJson("start");

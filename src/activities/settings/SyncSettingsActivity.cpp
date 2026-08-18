@@ -15,6 +15,7 @@
 #include "activities/util/KeyboardEntryActivity.h"
 #include "components/UITheme.h"
 #include "sync/DownloadQueue.h"
+#include "sync/SleepProgressSync.h"
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
 #include "util/StringUtils.h"
@@ -148,6 +149,13 @@ void SyncSettingsActivity::doManifestSync() {
   }
   const sync_manifest::SyncResult result = sync_manifest::sync();
   syncNowStatus_ = result.ok ? tr(STR_SYNC_NOW_DONE) : tr(STR_SYNC_NOW_FAILED);
+
+  // A completed manifest fetch proves this location has working Wi-Fi, so it
+  // clears the shared sleep/library back-off (SleepProgressSync.h): without
+  // this, a device that escalated its skip count while away kept refusing the
+  // automatic before-sleep upload for several more power-offs after the owner
+  // came home and watched this very button succeed.
+  if (result.ok) sleep_progress_sync::noteNetworkReached();
 
   // The radio is already up and paid for by the sync above, so the heartbeat
   // rides along -- same arrangement HomeActivity::trySyncLibrary() uses. This

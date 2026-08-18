@@ -316,6 +316,7 @@ SyncResult performSync(const bool deltaMode, const uint64_t sinceWatermark, cons
     ManifestStreamParser parser(&onManifestEntry, &onManifestTrailerForReserve, &entryCtx);
 
     int httpStatus = -1;
+    const uint32_t fetchStartedMs = millis();
     const bool fetchOk = HttpDownloader::fetchUrl(
         url,
         [&](const uint8_t* data, size_t len) -> bool {
@@ -326,6 +327,15 @@ SyncResult performSync(const bool deltaMode, const uint64_t sinceWatermark, cons
           return parser.feed(data, len);
         },
         "", "", &httpStatus, SYNC_STORE.getAccessToken(), timeoutMs);
+    // The budget below is not a single deadline: SecureHttpClient re-arms it
+    // per phase (connect, handshake, header read, and again between body
+    // chunks), so a page can legitimately take longer than timeoutMs and a
+    // failure tells you nothing about which phase ran out. Log the wall time
+    // so a too-tight budget is visible from a plain serial capture instead of
+    // being guessed at.
+    LOG_DBG("SYNC", "Manifest page %u fetch took %u ms (ok=%d status=%d, budget %u ms)",
+            (unsigned)(pager.pagesFetched() + 1), (unsigned)(millis() - fetchStartedMs), fetchOk, httpStatus,
+            (unsigned)timeoutMs);
 
     if (writeFailed) {
       result.error = "sd_write_failed";

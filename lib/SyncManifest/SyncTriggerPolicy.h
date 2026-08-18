@@ -55,6 +55,29 @@ namespace sync_trigger {
 constexpr uint32_t AUTO_SYNC_TIMEOUT_MS = 3000;
 constexpr uint32_t EXPLICIT_SYNC_TIMEOUT_MS = 15000;
 
+// The library screen's automatic manifest sync sits between the two above and
+// gets its own budget rather than sharing AUTO_SYNC_TIMEOUT_MS. Two reasons,
+// both measured rather than assumed:
+//
+//  - It is not on the power-off path. AUTO_SYNC_TIMEOUT_MS is short because a
+//    dead network must not stall a power-off (SleepProgressSync) or a
+//    background telemetry POST nobody is waiting on. This one runs at Home
+//    behind a visible "Syncing library" popup with the owner watching, so a
+//    few extra seconds cost patience, not the feeling of a device that will
+//    not turn off.
+//  - 3000 ms was empirically too tight for it while being ample for the
+//    heartbeat that follows on the same connection: on hardware the manifest
+//    GET ran out waiting for the response's first line while the heartbeat
+//    POST right after it completed comfortably. A manifest page is a much
+//    larger server-side operation than a heartbeat, so the two do not belong
+//    on one number.
+//
+// Note this bound is per page, not per sync: SyncManifest.h's pager can fetch
+// several, so a large library pays it more than once. SyncManifest.cpp logs
+// each page's actual wall time against its budget, which is the number to
+// look at before changing this.
+constexpr uint32_t HOME_SYNC_TIMEOUT_MS = 8000;
+
 bool shouldAutoSync(bool paired, bool wifiConnected, bool alreadyAttemptedThisBoot);
 
 // Pure decision for "should the library screen bring WiFi up itself, right
