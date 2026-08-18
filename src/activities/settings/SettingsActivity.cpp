@@ -84,9 +84,14 @@ void SettingsActivity::rebuildSettingsLists() {
     controlsSettings.insert(controlsSettings.begin(),
                             SettingInfo::Action(StrId::STR_REMAP_FRONT_BUTTONS, SettingAction::RemapFrontButtons));
   }
+  // Account Sync leads the tab rather than following the value settings and
+  // the other two network rows: it is the entry point for pairing, library
+  // sync and progress sync, so it should be on screen the moment System is
+  // selected instead of seven rows down.
+  systemSettings.insert(systemSettings.begin(),
+                        SettingInfo::Action(StrId::STR_ACCOUNT_SYNC, SettingAction::SyncSettings));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_KOREADER_SYNC, SettingAction::KOReaderSync));
-  systemSettings.push_back(SettingInfo::Action(StrId::STR_ACCOUNT_SYNC, SettingAction::SyncSettings));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_OPDS_SERVERS, SettingAction::OPDSBrowser));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   // OTA fetches this board's own release asset (see OtaUpdater); boards whose
