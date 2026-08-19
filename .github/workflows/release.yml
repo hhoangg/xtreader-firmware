@@ -81,3 +81,61 @@ jobs:
             .pio/build/${{ matrix.pio_env }}/firmware.elf
             .pio/build/${{ matrix.pio_env }}/firmware.map
             .pio/build/${{ matrix.pio_env }}/partitions.bin
+
+  publish-release:
+    name: Publish GitHub release
+    needs: build-release
+    runs-on: ubuntu-latest
+    # The build job only uploads workflow artifacts, which OtaUpdater cannot see:
+    # it fetches /releases/latest and reads the release's asset list. This job is
+    # what actually turns a pushed tag into something a device can update to.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check the tag matches platformio.ini
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # CROSSPOINT_VERSION is baked in from [crosspoint] version, not from the
+          # tag, so a mismatch ships a firmware that reports the old version. The
+          # device would then see this release as newer forever and re-update on
+          # every check.
+          declared="$(sed -n 's/^version[[:space:]]*=[[:space:]]*//p' platformio.ini | head -1)"
+          if [ "${TAG#v}" != "$declared" ]; then
+            echo "tag ${TAG} does not match [crosspoint] version ${declared}" >&2
+            exit 1
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # Flatten the per-board artifact directories. Each holds exactly one
+          # firmware*.bin, already named the way OtaUpdater asks for it
+          # (firmware.bin for X4/X3, firmware-<board>.bin otherwise), so the
+          # names stay untouched and cannot collide.
+          find artifacts -name 'firmware*.bin' -exec cp {} . \;
+          ls -l firmware*.bin
+          # A tag carrying "rc" ships as a prerelease: GitHub omits prereleases
+          # from /releases/latest, which is the only endpoint OtaUpdater reads,
+          # so release candidates never reach a device that did not ask for one.
+          prerelease=""
+          case "$TAG" in
+            *rc*) prerelease="--prerelease" ;;
+          esac
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --generate-notes \
+            $prerelease \
+            firmware*.bin

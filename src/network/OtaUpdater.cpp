@@ -19,7 +19,24 @@
 #include "FirmwareFlasher.h"
 
 namespace {
-constexpr char latestReleaseUrl[] = "https://api.github.com/repos/crosspoint-reader/crosspoint-reader/releases/latest";
+constexpr char latestReleaseUrl[] = "https://api.github.com/repos/hhoangg/xtreader-firmware/releases/latest";
+
+// Read the three leading integers of a version string, tolerating a "v" prefix
+// (GitHub tags are commonly "v1.6.0") and any suffix ("1.6.0-rc+abc", "1.6.0rc").
+//
+// Returns false unless all three segments parsed. sscanf leaves its output
+// arguments untouched on a partial match, so a tag that does not start with a
+// number would otherwise compare uninitialised stack values and report an
+// update at random.
+bool parseSemver(const char* version, int& major, int& minor, int& patch) {
+  if (version == nullptr) {
+    return false;
+  }
+  if (*version == 'v' || *version == 'V') {
+    ++version;
+  }
+  return sscanf(version, "%d.%d.%d", &major, &minor, &patch) == 3;
+}
 }  // namespace
 
 OtaUpdater::OtaUpdaterError OtaUpdater::checkForUpdate() {
@@ -84,8 +101,11 @@ bool OtaUpdater::isUpdateNewer() const {
   const auto currentVersion = CROSSPOINT_VERSION;
 
   // semantic version check (only match on 3 segments)
-  sscanf(latestVersion.c_str(), "%d.%d.%d", &latestMajor, &latestMinor, &latestPatch);
-  sscanf(currentVersion, "%d.%d.%d", &currentMajor, &currentMinor, &currentPatch);
+  if (!parseSemver(latestVersion.c_str(), latestMajor, latestMinor, latestPatch) ||
+      !parseSemver(currentVersion, currentMajor, currentMinor, currentPatch)) {
+    LOG_ERR("OTA", "Unparseable version (latest=%s current=%s)", latestVersion.c_str(), currentVersion);
+    return false;
+  }
 
   /*
    * Compare major versions.
