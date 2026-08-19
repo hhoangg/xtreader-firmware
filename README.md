@@ -10,6 +10,22 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 > If you're planning to buy an Xteink device, consider purchasing an **X3/X4 Developer Edition** through https://crosspointreader.com. CrossPoint receives a small share of each sale, helping fund development costs.
 
+> ### This repository is a fork
+>
+> `hhoangg/xtreader-firmware` tracks
+> [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader)
+> and carries the changes that pair the reader with the
+> [xtreader](https://github.com/hhoangg/xtreader) sync server.
+>
+> **Over-the-air updates come from this repository's
+> [releases](https://github.com/hhoangg/xtreader-firmware/releases), not from upstream's.**
+> A device only follows this channel once it has been flashed with a build from here,
+> over USB or from the SD card. Until then it keeps checking upstream, and updating
+> would replace the fork.
+>
+> Everything below is upstream's documentation and still applies, except that the
+> clone URL and the release downloads point here.
+
 ## What can CrossPoint do?
 
 - **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more. 
@@ -34,7 +50,7 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
   - AP mode (hotspot) and STA mode (join existing Wi-Fi), both with QR helpers
   - Calibre wireless connect flow
   - OPDS browser with saved servers (up to 8), search, pagination, and direct download
-  - OTA update checks and installs from GitHub releases
+  - OTA update checks and installs from this repository's GitHub releases
 
 - **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes including transparent overlays, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.
 
@@ -78,7 +94,7 @@ USB port or browser before assuming the device is locked. Only reach for the unl
 ### Web installer (specific version)
 
 1. Connect your device to your computer via USB-C and wake/unlock the device
-2. Download a `firmware.bin` from [Releases](https://github.com/crosspoint-reader/crosspoint-reader/releases), local build, or continuous integration artifact.
+2. Download a `firmware.bin` from [Releases](https://github.com/hhoangg/xtreader-firmware/releases), local build, or continuous integration artifact.
 3. Go to https://crosspointreader.com/#flash-tools, select device (X3 or X4), click "Custom .bin" and upload a `firmware.bin`.
 
 ### Revert to Official Firmware
@@ -93,7 +109,7 @@ To revert to the official firmware, you can also flash the latest official firmw
 pip install esptool
 ```
 
-2. Download `firmware.bin` from the [releases page](https://github.com/crosspoint-reader/crosspoint-reader/releases).
+2. Download `firmware.bin` from the [releases page](https://github.com/hhoangg/xtreader-firmware/releases).
 3. Connect your device via USB-C.
 4. Find the device port. On Linux, run `dmesg` after connecting. On macOS:
 
@@ -152,8 +168,8 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 ### Setup
 
 ```bash
-git clone --recursive https://github.com/crosspoint-reader/crosspoint-reader
-cd crosspoint-reader
+git clone --recursive https://github.com/hhoangg/xtreader-firmware
+cd xtreader-firmware
 
 # if cloned without --recursive:
 git submodule update --init --recursive
