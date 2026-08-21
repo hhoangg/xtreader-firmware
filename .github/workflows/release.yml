@@ -133,9 +133,20 @@ jobs:
           case "$TAG" in
             *rc*) prerelease="--prerelease" ;;
           esac
-          gh release create "$TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "$TAG" \
-            --generate-notes \
-            $prerelease \
-            firmware*.bin
+          # Idempotent: re-running the workflow on a tag that already has a
+          # release must not fail. `gh release create` refuses with "a release
+          # with the same tag name already exists", which is exactly how this
+          # job failed the first time it ran -- the release had been published
+          # by hand while Actions was still disabled on the fork.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG exists; replacing its assets."
+            gh release upload "$TAG" firmware*.bin \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" \
+              --generate-notes \
+              $prerelease \
+              firmware*.bin
+          fi
