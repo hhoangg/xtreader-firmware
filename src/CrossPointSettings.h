@@ -202,6 +202,12 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   uint8_t sleepScreenCoverMode = FIT;
   // Sleep screen cover filter
   uint8_t sleepScreenCoverFilter = NO_FILTER;
+  // Draw only wallpapers this device downloaded from the sync server, ignoring
+  // anything the reader copied onto the card by hand. Off by default: /.sleep
+  // predates syncing, and silently hiding a reader's own pictures would be a
+  // surprise. On, it stops one synced wallpaper being lost among dozens of
+  // hand-copied ones -- the odds of drawing it are 1/N otherwise.
+  uint8_t sleepScreenSyncedOnly = 0;
   // Status bar settings
   uint8_t statusBarChapterPageCount = 1;
   uint8_t statusBarBookProgressPercentage = 1;

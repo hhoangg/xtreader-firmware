@@ -11,6 +11,7 @@
 #include <Memory.h>
 #include <PNGdec.h>
 #include <Txt.h>
+#include <WallpaperPaths.h>
 #include <Xtc.h>
 
 #include <algorithm>
@@ -388,6 +389,14 @@ bool findNextValidSleepImage(HalFile& dir, const SleepRecentKind recentKind, cha
 
     dirFile.getName(name, MAX_SLEEP_FILE_NAME_LEN);
     if (name[0] == '\0' || name[0] == '.') continue;
+
+    // Synced-only applies to the standard wallpaper directory. Overlays are a
+    // separate, hand-curated set that syncing never writes to, so filtering
+    // them would leave that mode with nothing to draw.
+    if (SETTINGS.sleepScreenSyncedOnly && recentKind == SleepRecentKind::Standard &&
+        wallpaper_paths::classifyFileName(name) != wallpaper_paths::FileKind::Managed) {
+      continue;
+    }
 
     const bool isBmp = FsHelpers::hasBmpExtension(name);
     const bool isPng = recentKind == SleepRecentKind::Overlay && FsHelpers::hasPngExtension(std::string_view{name});
