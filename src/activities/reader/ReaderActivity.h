@@ -29,6 +29,12 @@ class ReaderActivity : public Activity {
   virtual bool pageTurn(bool isForward) = 0;
   virtual bool skipPages(int amount) { return pageTurn(amount > 0); }
   virtual bool isAtEndOfBook() const = 0;
+
+  // Whole-book reading progress, 0..100, or -1 when it cannot be determined
+  // (book not loaded, page counts not established yet). Cached into
+  // RecentBooksStore on exit so the home screen has a percentage for a book
+  // that is not open without loading its spine table on the render task.
+  virtual int getBookProgressPercent() const { return -1; }
   virtual void onReturnFromEndOfBook() {}
 
   virtual void renderBook() = 0;

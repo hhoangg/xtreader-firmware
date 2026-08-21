@@ -10,6 +10,10 @@ struct RecentBook {
   std::string title;
   std::string author;
   std::string coverBmpPath;
+  // Whole-book reading progress, 0..100, or -1 when unknown. Cached by the
+  // reader on exit so the home screen can show it without loading the spine
+  // table off the SD card. Absent from an older recent.json, which reads as -1.
+  int progressPercent = -1;
 
   bool operator==(const RecentBook& other) const { return path == other.path; }
 };
@@ -30,9 +34,11 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);
 
-  // Add a book to the recent list (moves to front if already exists)
+  // Add a book to the recent list (moves to front if already exists).
+  // progressPercent is 0..100, or -1 to keep whatever an existing entry
+  // already cached (a book being opened has no fresh percentage yet).
   void addBook(const std::string& path, const std::string& title, const std::string& author,
-               const std::string& coverBmpPath);
+               const std::string& coverBmpPath, int progressPercent = -1);
 
   void updateBook(const std::string& path, const std::string& title, const std::string& author,
                   const std::string& coverBmpPath);
@@ -41,6 +47,11 @@ class RecentBooksStore : public PersistableStore<RecentBooksStore> {
   // Returns true if an entry was found and removed (no-op + false otherwise).
   // Persistence is best-effort: a failed save is logged, not reflected in the return.
   bool removeByPath(const std::string& path);
+
+  // Cache the whole-book reading percentage (0..100) for an entry. A negative
+  // percent means "not known", and leaves any cached value alone. No-op, and
+  // no SD write, when nothing matches path or the value is unchanged.
+  void updateProgressPercent(const std::string& path, int progressPercent);
 
   // Repoint an entry's path (and coverBmpPath, if it lived under the old cache dir) after the
   // backing file and cache dir were moved on disk. No-op if no entry matches oldPath.

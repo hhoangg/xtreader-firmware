@@ -4,7 +4,7 @@
 #include <utility>
 
 ManifestIndexMerge::ManifestIndexMerge(std::vector<std::string> removeIds, std::vector<ManifestIndexRecord> upserts,
-                                        RecordCallback onRecord, void* ctx)
+                                       RecordCallback onRecord, void* ctx)
     : removeIds_(std::move(removeIds)),
       upserts_(std::move(upserts)),
       onRecord_(onRecord),

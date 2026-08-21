@@ -2,8 +2,7 @@
 
 namespace download_queue {
 
-QueueState::EnqueueResult QueueState::enqueue(const std::string& id, const std::string& path,
-                                              uint64_t totalBytes) {
+QueueState::EnqueueResult QueueState::enqueue(const std::string& id, const std::string& path, uint64_t totalBytes) {
   if (contains(id)) return EnqueueResult::AlreadyQueued;
   if (count_ >= MAX_QUEUE) return EnqueueResult::Full;
 

@@ -305,10 +305,9 @@ bool ActivityManager::captureReaderProgressForSleep(KOReaderProgress& outProgres
   // immediately after, which drops the entire activity stack (see
   // replaceActivity()'s PendingAction::Replace handling in loop()) -- this
   // stacked reader is never resumed.
-  for (const auto& activity : stackActivities) {
-    if (activity->isReaderActivity()) return activity->captureProgressForSleep(outProgress);
-  }
-  return false;
+  const auto it = std::find_if(stackActivities.begin(), stackActivities.end(),
+                               [](const auto& activity) { return activity->isReaderActivity(); });
+  return it != stackActivities.end() && (*it)->captureProgressForSleep(outProgress);
 }
 
 bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }

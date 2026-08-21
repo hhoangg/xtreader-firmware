@@ -317,6 +317,14 @@ bool XtcReaderActivity::skipPages(int amount) {
 
 bool XtcReaderActivity::isAtEndOfBook() const { return xtc && currentPage >= xtc->getPageCount(); }
 
+int XtcReaderActivity::getBookProgressPercent() const {
+  if (!xtc) return -1;
+  const uint32_t pageCount = xtc->getPageCount();
+  if (pageCount == 0) return -1;
+  const uint32_t clampedPage = currentPage >= pageCount ? pageCount - 1 : currentPage;
+  return xtc->calculateProgress(clampedPage);
+}
+
 void XtcReaderActivity::onReturnFromEndOfBook() {
   if (xtc && xtc->getPageCount() > 0) {
     currentPage = xtc->getPageCount() - 1;
@@ -360,8 +368,9 @@ ScreenshotInfo XtcReaderActivity::getScreenshotInfo() const {
     snprintf(info.title, sizeof(info.title), "%s", t.c_str());
     const uint32_t pageCount = xtc->getPageCount();
     info.totalPages = pageCount;
-    uint32_t clampedPage = (pageCount > 0 && currentPage >= pageCount) ? pageCount - 1 : currentPage;
-    info.progressPercent = pageCount > 0 ? xtc->calculateProgress(clampedPage) : 0;
+    const uint32_t clampedPage = (pageCount > 0 && currentPage >= pageCount) ? pageCount - 1 : currentPage;
+    const int pct = getBookProgressPercent();
+    if (pct >= 0) info.progressPercent = pct;
     info.currentPage = static_cast<int>(clampedPage) + 1;
   } else {
     info.currentPage = currentPage + 1;

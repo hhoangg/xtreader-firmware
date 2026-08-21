@@ -68,10 +68,7 @@ void logItemEnd(const std::string& id, const std::string& path, const book_downl
 // this needs no lazy-init guard.
 class Worker {
  public:
-  Worker() {
-    mutex_ = xSemaphoreCreateMutex();
-    assert(mutex_ != nullptr);
-  }
+  Worker() : mutex_(xSemaphoreCreateMutex()) { assert(mutex_ != nullptr); }
 
   EnqueueOutcome enqueue(const std::string& id) {
     if (!SYNC_STORE.isPaired()) return EnqueueOutcome::NotPaired;
@@ -79,12 +76,10 @@ class Worker {
     if (!sync_manifest::findById(id, record)) return EnqueueOutcome::NotFound;
 
     QueueState::EnqueueResult result;
-    bool needsStart = false;
     {
       Lock lock(mutex_);
       result = state_.enqueue(id, record.path, record.sizeBytes);
-      needsStart = result == QueueState::EnqueueResult::Ok && taskHandle_ == nullptr;
-      if (needsStart) startLocked();
+      if (result == QueueState::EnqueueResult::Ok && taskHandle_ == nullptr) startLocked();
     }
 
     switch (result) {

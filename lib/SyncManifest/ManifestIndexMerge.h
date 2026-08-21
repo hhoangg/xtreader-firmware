@@ -48,7 +48,7 @@ class ManifestIndexMerge {
   // buildDeltaMerge() for how one manifest delta response is split into
   // these two lists.
   ManifestIndexMerge(std::vector<std::string> removeIds, std::vector<ManifestIndexRecord> upserts,
-                      RecordCallback onRecord, void* ctx);
+                     RecordCallback onRecord, void* ctx);
 
   bool feed(const uint8_t* data, size_t len);
 

@@ -76,6 +76,12 @@ void ReaderActivity::onExit() {
   APP_STATE.readerActivityLoadCount = 0;
   APP_STATE.saveToFile();
 
+  // The one place every close, sleep and finish funnels through, so the home
+  // screen's cached percentage can never be left behind by a path that forgot
+  // to update it. A finished book reads as 100 even once its last section is
+  // gone; -1 (nothing to report) leaves the cached value alone.
+  RECENT_BOOKS.updateProgressPercent(bookPath, isAtEndOfBook() ? 100 : getBookProgressPercent());
+
   endOfBookOptions.reset();
   endOfBookOptionsReady.store(false, std::memory_order_release);
 }

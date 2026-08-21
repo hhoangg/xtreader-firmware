@@ -114,14 +114,13 @@ const char* formatBadge(const std::string& path) {
 
 // Whole-book reading progress, 0..100, or -1 when it is not known.
 //
-// It is never known here: drawRecentBookCover() is handed a RecentBook (path,
-// title, author, cover path) and nothing else, and the firmware has no
-// whole-book percentage outside an open reader -- deriving one costs a
-// BookMetadataCache::load(), which reads the entire spine table off the SD card
-// on the render task. The card lays the row and bar out for the day a cheap
-// source exists (a percent cached in RecentBooksStore, say); until then it
-// draws neither rather than showing a number that is not real.
-int bookProgressPercent(const RecentBook&) { return -1; }
+// Read straight off the recents entry: the reader caches its own percentage
+// there on exit, so nothing here touches the SD card. It is unknown for a book
+// that has not been opened since the entry was written, and the card then draws
+// neither the row nor the bar rather than showing a number that is not real.
+int bookProgressPercent(const RecentBook& book) {
+  return (book.progressPercent < 0 || book.progressPercent > 100) ? -1 : book.progressPercent;
+}
 
 }  // namespace
 

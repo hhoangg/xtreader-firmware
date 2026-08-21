@@ -17,6 +17,11 @@ void RecentBooksStore::toJson(JsonDocument& doc) const {
     obj["title"] = book.title;
     obj["author"] = book.author;
     obj["coverBmpPath"] = book.coverBmpPath;
+    // Omitted while unknown, so an entry that has never been read stays as
+    // small as it was before this field existed.
+    if (book.progressPercent >= 0) {
+      obj["progressPercent"] = book.progressPercent;
+    }
   }
 }
 
@@ -33,6 +38,9 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
     book.title = obj["title"] | "";
     book.author = obj["author"] | "";
     book.coverBmpPath = obj["coverBmpPath"] | "";
+    // Missing (pre-existing store) or out of range reads as unknown.
+    const int percent = obj["progressPercent"] | -1;
+    book.progressPercent = (percent < 0 || percent > 100) ? -1 : percent;
     recentBooks.push_back(book);
   }
 
@@ -41,19 +49,25 @@ bool RecentBooksStore::fromJson(JsonVariantConst doc) {
 }
 
 void RecentBooksStore::addBook(const std::string& path, const std::string& title, const std::string& author,
-                               const std::string& coverBmpPath) {
+                               const std::string& coverBmpPath, const int progressPercent) {
   // Drop stale entries first so a new add can't evict a valid book in their stead.
   pruneMissing();
+
+  int percent = std::clamp(progressPercent, -1, 100);
 
   // Remove existing entry if present
   auto it =
       std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
   if (it != recentBooks.end()) {
+    // Reopening a book must not throw away the percentage its last session cached.
+    if (percent < 0) {
+      percent = it->progressPercent;
+    }
     recentBooks.erase(it);
   }
 
   // Add to front
-  recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath});
+  recentBooks.insert(recentBooks.begin(), {path, title, author, coverBmpPath, percent});
 
   // Trim to max size
   if (recentBooks.size() > MAX_RECENT_BOOKS) {
@@ -87,6 +101,22 @@ bool RecentBooksStore::removeByPath(const std::string& path) {
     LOG_ERR("RBS", "Failed to persist removal of recent book: %s", path.c_str());
   }
   return true;
+}
+
+void RecentBooksStore::updateProgressPercent(const std::string& path, const int progressPercent) {
+  if (progressPercent < 0) {
+    return;
+  }
+  const int percent = std::min(progressPercent, 100);
+  auto it =
+      std::find_if(recentBooks.begin(), recentBooks.end(), [&](const RecentBook& book) { return book.path == path; });
+  if (it == recentBooks.end() || it->progressPercent == percent) {
+    return;
+  }
+  it->progressPercent = percent;
+  if (!saveToFile()) {
+    LOG_ERR("RBS", "Failed to persist progress for recent book: %s", path.c_str());
+  }
 }
 
 void RecentBooksStore::updatePath(const std::string& oldPath, const std::string& newPath,

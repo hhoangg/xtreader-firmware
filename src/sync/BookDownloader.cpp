@@ -113,8 +113,7 @@ DownloadResult download(const std::string& id, ProgressCallback onProgress, void
   }
 
   const std::string url = SYNC_STORE.getBaseUrl() + "/library/" + id + "/file";
-  LOG_DBG("BOOKDL", "Downloading id=%s -> %s (heap: %u)", id.c_str(), record.path.c_str(),
-          (unsigned)ESP.getFreeHeap());
+  LOG_DBG("BOOKDL", "Downloading id=%s -> %s (heap: %u)", id.c_str(), record.path.c_str(), (unsigned)ESP.getFreeHeap());
 
   StreamCtx ctx;
   ctx.tmpFile = &tmpFile;

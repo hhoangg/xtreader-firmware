@@ -376,6 +376,12 @@ bool TxtReaderActivity::skipPages(int amount) {
 
 bool TxtReaderActivity::isAtEndOfBook() const { return initialized && currentPage >= totalPages; }
 
+int TxtReaderActivity::getBookProgressPercent() const {
+  if (!initialized || totalPages <= 0) return -1;
+  const int percent = static_cast<int>((currentPage + 1) * 100.0f / totalPages + 0.5f);
+  return percent > 100 ? 100 : percent;
+}
+
 void TxtReaderActivity::onReturnFromEndOfBook() { currentPage = totalPages > 0 ? totalPages - 1 : 0; }
 
 void TxtReaderActivity::saveProgress() const {
@@ -521,7 +527,7 @@ ScreenshotInfo TxtReaderActivity::getScreenshotInfo() const {
   }
   info.currentPage = currentPage + 1;
   info.totalPages = totalPages;
-  info.progressPercent = totalPages > 0 ? static_cast<int>((currentPage + 1) * 100.0f / totalPages + 0.5f) : 0;
-  if (info.progressPercent > 100) info.progressPercent = 100;
+  const int pct = getBookProgressPercent();
+  if (pct >= 0) info.progressPercent = pct;
   return info;
 }

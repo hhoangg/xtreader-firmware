@@ -42,6 +42,7 @@ class XtcReaderActivity final : public ReaderActivity {
   bool pageTurn(bool isForward) override;
   bool skipPages(int amount) override;
   bool isAtEndOfBook() const override;
+  int getBookProgressPercent() const override;
   void onReturnFromEndOfBook() override;
 
   ScreenshotInfo getScreenshotInfo() const override;

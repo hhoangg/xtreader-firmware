@@ -157,8 +157,8 @@ bool parseManifestLine(const char* line, size_t len, ManifestLine& out) {
 
   Ctx ctx;
   ctx.out = &out;
-  StreamingJsonParser parser(
-      JsonCallbacks{&ctx, onKey, onString, onNumber, onBool, onNull, onObjectStart, onObjectEnd, onArrayStart, onArrayEnd});
+  StreamingJsonParser parser(JsonCallbacks{&ctx, onKey, onString, onNumber, onBool, onNull, onObjectStart, onObjectEnd,
+                                           onArrayStart, onArrayEnd});
   parser.feed(line, len);
   if (parser.hasError()) return false;
 

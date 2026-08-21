@@ -237,13 +237,8 @@ void EpubReaderActivity::openReaderMenu() {
   pendingManualTurn = 0;
   const int currentPage = section ? section->currentPage + 1 : 0;
   const int totalPages = section ? section->estimatedTotalPages() : 0;
-  float bookProgress = 0.0f;
-  if (epub->getBookSize() > 0 && section && section->estimatedTotalPages() > 0) {
-    const float chapterProgress =
-        static_cast<float>(section->currentPage) / static_cast<float>(section->estimatedTotalPages());
-    bookProgress = epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f;
-  }
-  const int bookProgressPercent = clampPercent(static_cast<int>(bookProgress + 0.5f));
+  const int knownPercent = getBookProgressPercent();
+  const int bookProgressPercent = knownPercent < 0 ? 0 : knownPercent;
   startActivityForResult(std::make_unique<EpubReaderMenuActivity>(
                              renderer, mappedInput, epub->getTitle(), currentPage, totalPages, bookProgressPercent,
                              SETTINGS.orientation, !currentPageFootnotes.empty(), !cachedBookmarks.empty()),
@@ -362,7 +357,8 @@ void EpubReaderActivity::loop() {
     if (atEndOfBook && !recentsEntryRemoved) {
       recentsEntryRemoved = RECENT_BOOKS.removeByPath(epub->getPath());
     } else if (!atEndOfBook && recentsEntryRemoved) {
-      RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath());
+      RECENT_BOOKS.addBook(epub->getPath(), epub->getTitle(), epub->getAuthor(), epub->getThumbBmpPath(),
+                           getBookProgressPercent());
       recentsEntryRemoved = false;
     }
   }
@@ -995,6 +991,14 @@ bool EpubReaderActivity::skipPages(int amount) {
 }
 
 bool EpubReaderActivity::isAtEndOfBook() const { return epub && currentSpineIndex >= epub->getSpineItemsCount(); }
+
+int EpubReaderActivity::getBookProgressPercent() const {
+  if (!epub || epub->getBookSize() <= 0 || !section) return -1;
+  const int totalPages = section->estimatedTotalPages();
+  if (totalPages <= 0) return -1;
+  const float chapterProgress = static_cast<float>(section->currentPage) / static_cast<float>(totalPages);
+  return clampPercent(static_cast<int>(epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f + 0.5f));
+}
 
 void EpubReaderActivity::onReturnFromEndOfBook() {
   if (epub && epub->getSpineItemsCount() > 0) {
@@ -1772,13 +1776,8 @@ ScreenshotInfo EpubReaderActivity::getScreenshotInfo() const {
   if (section) {
     info.currentPage = section->currentPage + 1;
     info.totalPages = section->estimatedTotalPages();
-    if (epub && epub->getBookSize() > 0 && info.totalPages > 0) {
-      const float chapterProgress = static_cast<float>(section->currentPage) / static_cast<float>(info.totalPages);
-      int pct = static_cast<int>(epub->calculateProgress(currentSpineIndex, chapterProgress) * 100.0f + 0.5f);
-      if (pct < 0) pct = 0;
-      if (pct > 100) pct = 100;
-      info.progressPercent = pct;
-    }
+    const int pct = getBookProgressPercent();
+    if (pct >= 0) info.progressPercent = pct;
   }
   return info;
 }
