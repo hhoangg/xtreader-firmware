@@ -12,22 +12,29 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 > ### This repository is a fork
 >
-> `hhoangg/xtreader-firmware` tracks
-> [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader)
-> and carries the changes that pair the reader with the
-> [xtreader](https://github.com/hhoangg/xtreader) sync server.
+> `hhoangg/xtreader-firmware` is hhoangg's fork of
+> [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader). It
+> tracks upstream and adds the changes that pair the reader with
+> [**xtreader**](https://github.com/hhoangg/xtreader) — the self-hostable sync server and web UI that
+> holds this device's library, reading progress and sleep-screen wallpapers. That repository carries
+> this one as a submodule under `firmware/`, and its device-facing contract is written up in
+> [docs/API.md](https://github.com/hhoangg/xtreader/blob/main/docs/API.md).
 >
-> **Over-the-air updates come from this repository's
-> [releases](https://github.com/hhoangg/xtreader-firmware/releases), not from upstream's.**
+> **Releases and over-the-air updates come from this fork's
+> [releases page](https://github.com/hhoangg/xtreader-firmware/releases), not from upstream's.**
 > A device only follows this channel once it has been flashed with a build from here,
 > over USB or from the SD card. Until then it keeps checking upstream, and updating
 > would replace the fork.
 >
-> Everything below is upstream's documentation and still applies, except that the
-> clone URL and the release downloads point here, and that reading-progress sync
-> is configured by pairing with the xtreader server rather than by entering
-> KOReader sync credentials by hand. The KOSync protocol underneath is unchanged;
-> the screens for pointing the device at a third-party KOReader server are gone.
+> Everything below is upstream's documentation and still applies. Two differences: the clone URL and
+> the release downloads point here, and reading-progress sync is configured by pairing with the
+> xtreader server rather than by entering KOReader sync credentials by hand. The KOSync protocol
+> underneath is unchanged; the screens for pointing the device at a third-party KOReader server are
+> gone.
+>
+> The tool links below are upstream's and are correct as written — the unlocker, the web flasher and
+> the SD-card font builder are hosted at `crosspointreader.com` and are used exactly as described,
+> including for builds from this fork. `xtreader.com` hosts none of them.
 
 ## What can CrossPoint do?
 
@@ -148,6 +155,15 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 ---
 
 ## Documentation
+
+### The xtreader server this fork pairs with
+
+- [hhoangg/xtreader](https://github.com/hhoangg/xtreader) — the sync server and web UI: what it is, how
+  to run it locally, and how to deploy it.
+- [Device API contract](https://github.com/hhoangg/xtreader/blob/main/docs/API.md) — pairing, KOSync
+  progress, the library manifest, wallpaper sync and telemetry, endpoint by endpoint.
+
+### This firmware
 
 - [User Guide](./USER_GUIDE.md)
 - [Web server usage](./docs/webserver.md)
