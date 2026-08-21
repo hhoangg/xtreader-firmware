@@ -23,6 +23,7 @@ enum class SettingAction {
   Language,
   DownloadFonts,
   TextSettings,
+  WallpaperGallery,
 };
 
 struct SettingInfo {

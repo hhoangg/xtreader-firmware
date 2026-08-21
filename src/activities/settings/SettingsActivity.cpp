@@ -22,6 +22,7 @@
 #include "StatusBarSettingsActivity.h"
 #include "SyncSettingsActivity.h"
 #include "TextSettingsActivity.h"
+#include "WallpaperGalleryActivity.h"
 #include "activities/network/WifiSelectionActivity.h"
 #include "activities/util/IntervalSelectionActivity.h"
 #include "components/UITheme.h"
@@ -88,6 +89,9 @@ void SettingsActivity::rebuildSettingsLists() {
   // selected instead of seven rows down.
   systemSettings.insert(systemSettings.begin(),
                         SettingInfo::Action(StrId::STR_ACCOUNT_SYNC, SettingAction::SyncSettings));
+  // Sits with the sleep-screen settings it feeds: the gallery's whole purpose
+  // is choosing what /.sleep holds.
+  displaySettings.push_back(SettingInfo::Action(StrId::STR_WALLPAPER_GALLERY, SettingAction::WallpaperGallery));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_WIFI_NETWORKS, SettingAction::Network));
   systemSettings.push_back(SettingInfo::Action(StrId::STR_CLEAR_READING_CACHE, SettingAction::ClearCache));
   // OTA fetches this board's own release asset (see OtaUpdater); boards whose
@@ -344,6 +348,9 @@ void SettingsActivity::toggleCurrentSetting() {
                                  SETTINGS.saveToFile();
                                  rebuildSettingsLists();
                                });
+        break;
+      case SettingAction::WallpaperGallery:
+        startActivityForResult(std::make_unique<WallpaperGalleryActivity>(renderer, mappedInput), resultHandler);
         break;
       case SettingAction::TextSettings:
         startActivityForResult(std::make_unique<TextSettingsActivity>(renderer, mappedInput, &sdFontSystem.registry(),
