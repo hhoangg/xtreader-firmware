@@ -23,8 +23,14 @@ ReconcilePlan plan(const std::vector<std::string>& assignedIds, const std::vecto
   keepOrdered.reserve(std::min(assignedIds.size(), limits.maxLocal));
   keepSorted.reserve(keepOrdered.capacity());
 
+  // Whether the manifest named a single wallpaper this module could act on.
+  // Distinct from keepOrdered being non-empty, which maxLocal can also empty
+  // out while the server has plenty assigned.
+  bool sawAssigned = false;
+
   for (const std::string& id : assignedIds) {
     if (!wallpaper_paths::isValidId(id)) continue;
+    sawAssigned = true;
     if (contains(keepSorted, id)) continue;  // duplicate row for the same wallpaper
     if (keepOrdered.size() >= limits.maxLocal) {
       out.droppedForLocalCap++;
@@ -44,11 +50,20 @@ ReconcilePlan plan(const std::vector<std::string>& assignedIds, const std::vecto
         const std::string id = wallpaper_paths::idFromFileName(name);
         if (contains(keepSorted, id)) {
           presentSorted.insert(std::lower_bound(presentSorted.begin(), presentSorted.end(), id), id);
-        } else {
+        } else if (sawAssigned) {
           // Either detached on the server, soft-deleted, or pushed past
           // maxLocal by a bigger set than this device will hold.
           out.deleteNames.push_back(name);
         }
+        // An empty assigned set is indistinguishable from a device identity
+        // the server has never heard of -- re-pairing mints a fresh one, and
+        // its manifest is legitimately empty until wallpapers are attached to
+        // it. Guessing wrong is not symmetric: deleting is instant, while
+        // getting the file back is a 96 KB download that cannot happen until
+        // the next WALLPAPER_SYNC_BOOT_INTERVAL comes around. So an empty set
+        // buys nothing and is not acted on. The price is that an owner who
+        // really does detach every wallpaper keeps the files on the card
+        // until some later, non-empty manifest sweeps them.
         break;
       }
       case wallpaper_paths::FileKind::ManagedTemp:

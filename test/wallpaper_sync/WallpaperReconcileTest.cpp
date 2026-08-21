@@ -111,17 +111,42 @@ TEST(WallpaperReconcile, DeletesWhatTheServerNoLongerAssigns) {
 }
 
 TEST(WallpaperReconcile, NeverDeletesAFileTheReaderPutThere) {
-  // The one that would be data loss. Nothing assigned at all, so every
-  // managed file goes -- and every other file stays.
+  // The one that would be data loss. The server assigns something else
+  // entirely, so the one managed file goes -- and every other file stays.
   const std::vector<std::string> local = {
       nameOf("wlp_a"), "sunset.bmp", "Ha Long.bmp", "CPW_wlp_b.bmp", "cpw_wlp_c.BMP", "readme.txt", "cpw_.bmp",
   };
-  const ReconcilePlan plan = wallpaper_reconcile::plan({}, local);
+  const ReconcilePlan plan = wallpaper_reconcile::plan({"wlp_other"}, local);
   EXPECT_EQ(plan.deleteNames, (std::vector<std::string>{nameOf("wlp_a")}));
   for (const std::string& name : local) {
     if (name == nameOf("wlp_a")) continue;
     EXPECT_FALSE(contains(plan.deleteNames, name)) << name;
   }
+}
+
+TEST(WallpaperReconcile, KeepsManagedWallpapersWhenNothingIsAssigned) {
+  // A device that re-paired gets a fresh identity whose manifest is empty
+  // until the owner attaches something, which looks exactly like an owner
+  // who detached everything. The card is left alone rather than cleared.
+  const ReconcilePlan plan = wallpaper_reconcile::plan({}, {nameOf("wlp_a"), nameOf("wlp_b"), "sunset.bmp"});
+  EXPECT_TRUE(plan.deleteNames.empty());
+  EXPECT_TRUE(plan.downloadIds.empty());
+  EXPECT_FALSE(plan.moreWorkPending);
+}
+
+TEST(WallpaperReconcile, KeepsManagedWallpapersWhenEveryAssignedIdIsUnusable) {
+  // Same protection when the manifest did have rows but none of them
+  // survived isValidId(): still no confirmation that the set is really empty.
+  const ReconcilePlan plan = wallpaper_reconcile::plan({"../evil", ""}, {nameOf("wlp_a")});
+  EXPECT_TRUE(plan.deleteNames.empty());
+}
+
+TEST(WallpaperReconcile, StillSweepsAnInterruptedDownloadWhenNothingIsAssigned) {
+  // Holding back on an empty manifest protects files something can draw. A
+  // ".part" is not one of those, so it goes either way.
+  const std::string temp = wallpaper_paths::tempNameFor(nameOf("wlp_a"));
+  const ReconcilePlan plan = wallpaper_reconcile::plan({}, {temp, nameOf("wlp_b")});
+  EXPECT_EQ(plan.deleteNames, (std::vector<std::string>{temp}));
 }
 
 TEST(WallpaperReconcile, SweepsAwayAnInterruptedDownloadEvenWhenStillAssigned) {

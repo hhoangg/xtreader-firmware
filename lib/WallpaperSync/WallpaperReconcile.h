@@ -60,7 +60,9 @@ struct ReconcilePlan {
 // `assignedIds` is every alive wallpaper the manifest listed for this device,
 // in the order the server sent them (ascending id -- the manifest's keyset
 // order, so the kept subset is stable across syncs). Duplicates and ids
-// wallpaper_paths::isValidId() rejects are dropped.
+// wallpaper_paths::isValidId() rejects are dropped. If nothing survives that,
+// no managed wallpaper is deleted -- see the comment in plan() for why an
+// empty set is not treated as an instruction to clear the card.
 //
 // `localNames` is the wallpaper directory's raw listing: every filename in
 // it, the reader's own included. Names this module does not recognise as its
