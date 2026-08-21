@@ -3,6 +3,7 @@
 #include <GfxRenderer.h>
 #include <I18n.h>
 
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -26,8 +27,6 @@ void EpubReaderChapterSelectionActivity::onEnter() {
     return;
   }
 
-  buildTocRowItems();
-
   // Start with the current chapter at the top of the viewport; the first
   // screen build pulls the viewport to it (ListNav follow-on-build).
   int tocIndex = epub->getTocIndexForSpineIndex(currentSpineIndex);
@@ -37,22 +36,31 @@ void EpubReaderChapterSelectionActivity::onEnter() {
   nav.selected = tocIndex;
 }
 
-// Derives tocLabels/tocRowItems from the epub's TOC. Called once from
-// onEnter() since the TOC is static for this screen's lifetime.
-void EpubReaderChapterSelectionActivity::buildTocRowItems() {
-  const int totalItems = listCount();
-  tocLabels.clear();
-  tocLabels.reserve(totalItems);
-  tocRowItems.clear();
-  tocRowItems.reserve(totalItems);
-  for (int i = 0; i < totalItems; i++) {
-    const auto tocItem = epub->getTocItem(i);
+// Materialises TOC entries [start, start + count) into the row buffers. Called
+// from buildScreen() on every repaint with just the slice the list can show, so
+// the buffers stay a fixed handful of rows however long the TOC is.
+//
+// getTocItem() reads from book.bin on the SD card, so this trades a bounded
+// number of small reads per repaint for not holding the whole TOC in RAM.
+void EpubReaderChapterSelectionActivity::buildWindow(const int start, const int count) {
+  windowStart = start;
+  windowLabels.clear();
+  windowItems.clear();
+  if (count <= 0) {
+    return;
+  }
+  windowLabels.reserve(count);
+  windowItems.reserve(count);
+  for (int i = 0; i < count; i++) {
+    const int absolute = start + i;
+    const auto tocItem = epub->getTocItem(absolute);
     std::string indent(tocItem.level > 0 ? (tocItem.level - 1) * 2 : 0, ' ');
-    tocLabels.push_back(indent + tocItem.title);
+    windowLabels.push_back(indent + tocItem.title);
     fui::ListItem item;
-    item.label = tocLabels.back().c_str();
-    item.actionValue = static_cast<int16_t>(i);
-    tocRowItems.push_back(item);
+    item.label = windowLabels.back().c_str();
+    // Absolute index: onRowAction feeds this straight back to activateIndex().
+    item.actionValue = static_cast<int16_t>(absolute);
+    windowItems.push_back(item);
   }
 }
 
@@ -110,25 +118,60 @@ void EpubReaderChapterSelectionActivity::buildScreen(UiScreen& screen) {
   if (!epub) {
     return;
   }
-  if (tocRowItems.empty()) {
+  const int totalItems = listCount();
+  if (totalItems <= 0) {
     screen.centeredText(tr(STR_NO_CHAPTERS), screen.theme().bodyText);
     return;
   }
 
-  // tocLabels/tocRowItems are built once in onEnter() (see
-  // buildTocRowItems()) and reused here on every repaint.
   fui::ListProps props;
-  props.items = tocRowItems.data();
-  props.count = static_cast<uint16_t>(tocRowItems.size());
   props.action = ACTION_ROW;
   props.inputMask = fui::InputTouch;  // physical buttons stay in loop()
+  // Measure the band and clamp the viewport against the ABSOLUTE count first.
+  // syncListViewport only writes nav.visibleRows, props.topIndex and
+  // props.selectedIndex, and never reads props.items, so the window can be cut
+  // from its results afterwards.
   syncListViewport(screen, props);
+
+  // + 2 covers the partial trailing row the widget draws past the last row that
+  // fully fits (it reads items[topIndex + visibleRows]).
+  const int rows = nav.visibleRows > 0 ? nav.visibleRows : 1;
+  const int start = props.topIndex;
+  int count = rows + 2;
+  if (start + count > totalItems) {
+    count = totalItems - start;
+  }
+  buildWindow(start, count);
+  if (windowItems.empty()) {
+    return;
+  }
+
+  props.items = windowItems.data();
+  props.count = static_cast<uint16_t>(windowItems.size());
+  // The widget indexes items[] from topIndex upwards, so the slice has to be
+  // rebased to start at 0. Row identity survives in ListItem::actionValue.
+  props.topIndex = 0;
+  const int selected = nav.selected - windowStart;
+  props.selectedIndex =
+      (selected >= 0 && selected < static_cast<int>(windowItems.size())) ? static_cast<int16_t>(selected) : -1;
+  // The built-in indicator sizes its thumb from props.count/topIndex, which now
+  // describe the window rather than the whole TOC. drawChrome() shows the
+  // position as "n/total" instead.
+  props.scrollIndicator = false;
   screen.list(props);
 }
 
 void EpubReaderChapterSelectionActivity::drawChrome() {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const Rect safe = UITheme::getInstance().getScreenSafeArea(renderer, true, false);
-  GUI.drawHeader(renderer, Rect{safe.x, safe.y + metrics.topPadding, safe.width, metrics.headerHeight},
-                 tr(STR_SELECT_CHAPTER));
+  const char* title = tr(STR_SELECT_CHAPTER);
+  // buildScreen() turns the scroll indicator off once the list is windowed, so
+  // carry the position in the header whenever the TOC outruns one screen.
+  char titleWithPosition[96];
+  const int totalItems = listCount();
+  if (totalItems > nav.visibleRows) {
+    snprintf(titleWithPosition, sizeof(titleWithPosition), "%s  %d/%d", title, nav.selected + 1, totalItems);
+    title = titleWithPosition;
+  }
+  GUI.drawHeader(renderer, Rect{safe.x, safe.y + metrics.topPadding, safe.width, metrics.headerHeight}, title);
 }
