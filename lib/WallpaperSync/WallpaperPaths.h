@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 // Naming rules for the lock-screen wallpapers this device downloads into
