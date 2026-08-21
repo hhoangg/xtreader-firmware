@@ -149,4 +149,38 @@ bool shouldDeliverPendingBookFinished(bool hasPending, bool paired, bool wifiCon
 //    pay the WiFi+TLS cost for no reason.
 bool shouldSyncBeforeSleep(bool paired, bool isReaderActivity, bool dirty);
 
+// How many boots must pass between two lock-screen wallpaper syncs
+// (src/sync/WallpaperSync.h). Boots, not hours: this board has no RTC and
+// sleep is a full power cut, so a boot count persisted to SD
+// (CrossPointState::bootsSinceWallpaperSync) is the only cadence unit that
+// survives a wake at all.
+//
+// Wallpapers are the opposite of books in how often they change: books
+// arrive whenever their owner uploads one and the reader wants them on the
+// next visit, so the manifest sync runs every boot; a wallpaper set is
+// arranged once and then left alone for weeks. 8 boots is roughly a day of
+// ordinary use (this device reboots on every wake), which is the right
+// latency for "I attached a new picture from the web UI this morning" while
+// costing one extra TLS handshake a day rather than one per wake.
+//
+// A sync that had to stop early -- more assigned wallpapers were missing
+// than one sync will download (see lib/WallpaperSync/WallpaperReconcile.h's
+// MAX_DOWNLOADS_PER_SYNC) -- deliberately leaves the counter *at* this value
+// instead of resetting it to zero, so the next boot picks the work back up
+// rather than waiting out a whole cadence with a half-filled directory.
+constexpr uint16_t WALLPAPER_SYNC_BOOT_INTERVAL = 8;
+
+// Pure decision for "should the wallpaper sync run right now?" -- the same
+// shape as shouldAutoSync() above, with one extra input.
+//  - paired / wifiConnected / alreadyAttemptedThisBoot: identical in meaning
+//    to shouldAutoSync()'s, including that this never brings WiFi up itself.
+//    It rides on whatever the library sync's own bring-up already
+//    established, which is why HomeActivity runs it after that one.
+//  - bootsSinceLastSync: CrossPointState::bootsSinceWallpaperSync, the count
+//    of boots that reached the library screen since the last successful
+//    wallpaper sync. Defaults to UINT16_MAX on a device that has never
+//    synced (or whose state.json predates the field), so a freshly paired
+//    reader gets its wallpapers on the first boot rather than in eight.
+bool shouldSyncWallpapers(bool paired, bool wifiConnected, bool alreadyAttemptedThisBoot, uint16_t bootsSinceLastSync);
+
 }  // namespace sync_trigger

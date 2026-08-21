@@ -54,6 +54,19 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   uint8_t sleepWifiConsecutiveFailures = 0;
   uint8_t sleepWifiSkipsRemaining = 0;
 
+  // Boots that have reached the library screen since the last successful
+  // lock-screen wallpaper sync (src/sync/WallpaperSync.h), driving the
+  // cadence in lib/SyncManifest/SyncTriggerPolicy.h
+  // (WALLPAPER_SYNC_BOOT_INTERVAL). A boot count rather than a timestamp
+  // because this board has no RTC and sleep is a full power cut -- there is
+  // no wall clock to schedule against, and a boot is the only tick that
+  // survives one. Persisted for the same reason the two fields above are:
+  // nothing in RAM outlives a wake. UINT16_MAX means "never synced", which
+  // is also what a state.json written before this field existed reads back
+  // as, so an already-paired reader syncs on its next boot rather than in
+  // eight.
+  uint16_t bootsSinceWallpaperSync = UINT16_MAX;
+
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);

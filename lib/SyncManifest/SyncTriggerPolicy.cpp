@@ -19,4 +19,9 @@ bool shouldSyncBeforeSleep(const bool paired, const bool isReaderActivity, const
   return paired && isReaderActivity && dirty;
 }
 
+bool shouldSyncWallpapers(const bool paired, const bool wifiConnected, const bool alreadyAttemptedThisBoot,
+                          const uint16_t bootsSinceLastSync) {
+  return paired && wifiConnected && !alreadyAttemptedThisBoot && bootsSinceLastSync >= WALLPAPER_SYNC_BOOT_INTERVAL;
+}
+
 }  // namespace sync_trigger

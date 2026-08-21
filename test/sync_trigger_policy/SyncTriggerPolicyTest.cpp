@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <cstdint>
+
 #include "SyncTriggerPolicy.h"
 
 namespace {
@@ -8,6 +10,8 @@ using sync_trigger::shouldAttemptLibraryWifiConnect;
 using sync_trigger::shouldAutoSync;
 using sync_trigger::shouldDeliverPendingBookFinished;
 using sync_trigger::shouldSyncBeforeSleep;
+using sync_trigger::shouldSyncWallpapers;
+using sync_trigger::WALLPAPER_SYNC_BOOT_INTERVAL;
 
 TEST(SyncTriggerPolicy, FiresWhenPairedConnectedAndNotYetAttempted) {
   EXPECT_TRUE(shouldAutoSync(/*paired=*/true, /*wifiConnected=*/true, /*alreadyAttemptedThisBoot=*/false));
@@ -95,6 +99,38 @@ TEST(SyncBeforeSleep, NeverFiresWhenClean) {
 
 TEST(SyncBeforeSleep, UnpairedOutsideReaderAndCleanStillFalse) {
   EXPECT_FALSE(shouldSyncBeforeSleep(false, false, false));
+}
+
+TEST(WallpaperSyncTrigger, FiresOnceTheBootIntervalHasPassed) {
+  EXPECT_TRUE(shouldSyncWallpapers(/*paired=*/true, /*wifiConnected=*/true, /*alreadyAttemptedThisBoot=*/false,
+                                   WALLPAPER_SYNC_BOOT_INTERVAL));
+}
+
+TEST(WallpaperSyncTrigger, FiresOnADeviceThatHasNeverSynced) {
+  // UINT16_MAX is CrossPointState's default, and also what a state.json
+  // written before the field existed reads back as -- a freshly paired
+  // reader must get its wallpapers now, not in eight boots.
+  EXPECT_TRUE(shouldSyncWallpapers(true, true, false, UINT16_MAX));
+}
+
+TEST(WallpaperSyncTrigger, WaitsOutTheCadence) {
+  for (uint16_t boots = 0; boots < WALLPAPER_SYNC_BOOT_INTERVAL; boots++) {
+    EXPECT_FALSE(shouldSyncWallpapers(true, true, false, boots)) << boots;
+  }
+}
+
+TEST(WallpaperSyncTrigger, NeverFiresUnpaired) {
+  EXPECT_FALSE(shouldSyncWallpapers(/*paired=*/false, true, false, UINT16_MAX));
+}
+
+TEST(WallpaperSyncTrigger, NeverBringsWifiUpItself) {
+  // Same rule as shouldAutoSync(): it rides on a connection something else
+  // established, never one it pays for.
+  EXPECT_FALSE(shouldSyncWallpapers(true, /*wifiConnected=*/false, false, UINT16_MAX));
+}
+
+TEST(WallpaperSyncTrigger, NeverFiresTwiceInOneBoot) {
+  EXPECT_FALSE(shouldSyncWallpapers(true, true, /*alreadyAttemptedThisBoot=*/true, UINT16_MAX));
 }
 
 }  // namespace

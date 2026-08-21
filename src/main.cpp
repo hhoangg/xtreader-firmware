@@ -52,6 +52,7 @@
 #include "sync/SleepProgressSync.h"
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
+#include "sync/WallpaperSync.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 #include "util/StringUtils.h"
@@ -949,6 +950,67 @@ static void testConsoleManifestSync() {
   logSerial.println(out);
 }
 
+// CMD:WALLPAPERSYNC -- runs the lock-screen wallpaper reconciliation
+// (src/sync/WallpaperSync.h) end to end against the paired account: fetches
+// GET /wallpapers/manifest, downloads what is assigned and missing into
+// /.sleep, and deletes what this firmware previously downloaded and the
+// server no longer assigns. Brings WiFi up first, same as CMD:MANIFESTSYNC.
+// Bypasses the boot-count cadence deliberately -- a test should not have to
+// reboot eight times -- so what it exercises is the sync itself, not
+// HomeActivity's trigger.
+static void testConsoleWallpaperSync() {
+  std::string ssid;
+  std::string wifiError;
+  const bool wifiConnected = testConsoleConnectWifi(ssid, wifiError);
+
+  wallpaper_sync::SyncResult result;
+  if (wifiConnected) {
+    result = wallpaper_sync::sync();
+  } else {
+    result.error = "wifi";
+  }
+
+  String out = "[TEST] {";
+  out += "\"wifiConnected\":";
+  out += (wifiConnected ? "true" : "false");
+  out += ",\"ssid\":";
+  appendJsonEscaped(out, ssid.data(), ssid.size());
+  out += ",\"wifiError\":";
+  appendJsonEscaped(out, wifiError.data(), wifiError.size());
+  out += ",\"ok\":";
+  out += (result.ok ? "true" : "false");
+  out += ",\"error\":";
+  appendJsonEscaped(out, result.error.data(), result.error.size());
+  out += ",\"httpStatus\":";
+  out += String(result.httpStatus);
+  out += ",\"pagesFetched\":";
+  out += String(static_cast<unsigned>(result.pagesFetched));
+  out += ",\"assignedCount\":";
+  out += String(static_cast<unsigned>(result.assignedCount));
+  out += ",\"downloaded\":";
+  out += String(static_cast<unsigned>(result.downloaded));
+  out += ",\"deleted\":";
+  out += String(static_cast<unsigned>(result.deleted));
+  out += ",\"failed\":";
+  out += String(static_cast<unsigned>(result.failed));
+  out += ",\"moreWorkPending\":";
+  out += (result.moreWorkPending ? "true" : "false");
+  out += ",\"heapBeforeFree\":";
+  out += String(static_cast<unsigned>(result.beforeRequest.freeHeap));
+  out += ",\"heapBeforeMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.beforeRequest.maxAllocHeap));
+  out += ",\"heapHandshakeFree\":";
+  out += String(static_cast<unsigned>(result.afterHandshake.freeHeap));
+  out += ",\"heapHandshakeMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.afterHandshake.maxAllocHeap));
+  out += ",\"heapAfterFree\":";
+  out += String(static_cast<unsigned>(result.afterSync.freeHeap));
+  out += ",\"heapAfterMaxAlloc\":";
+  out += String(static_cast<unsigned>(result.afterSync.maxAllocHeap));
+  out += "}";
+  logSerial.println(out);
+}
+
 // CMD:MANIFESTFIRST -- reports the id/path of the first entry (sorted by
 // path) in the local manifest index, so a host-side device test can pick a
 // real id to hand to CMD:BOOKDOWNLOAD/CMD:QUEUEADD without hardcoding one.
@@ -1788,6 +1850,8 @@ void loop() {
         }
       } else if (cmd == "MANIFESTSYNC") {
         testConsoleManifestSync();
+      } else if (cmd == "WALLPAPERSYNC") {
+        testConsoleWallpaperSync();
       } else if (cmd == "MANIFESTFIRST") {
         testConsoleManifestFirst();
       } else if (cmd.startsWith("MANIFESTHASID ")) {

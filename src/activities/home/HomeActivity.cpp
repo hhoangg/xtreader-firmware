@@ -28,6 +28,7 @@
 #include "sync/SleepProgressSync.h"
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
+#include "sync/WallpaperSync.h"
 
 namespace {
 // Once-per-boot latches for trySyncLibrary(): HomeActivity is destroyed and
@@ -49,6 +50,35 @@ bool libraryWifiConnectAttemptedThisBoot = false;
 // reachable. It has to outlive a single render pass because those two steps are
 // now deliberately split across passes -- see trySyncLibrary().
 bool libraryWifiBringUpAwaitingSyncResult = false;
+
+// Once-per-boot latch for trySyncWallpapers(), separate from the library
+// one: this counts the boot toward the wallpaper cadence even on a boot that
+// does not sync (see CrossPointState::bootsSinceWallpaperSync), so it has to
+// be set on every path, not only the one that reaches the network.
+bool wallpaperSyncCheckedThisBoot = false;
+
+// Set by trySyncLibrary() whenever it puts a popup on screen this render
+// pass. drawPopup() paints only its own box, sized to its own text, and the
+// requestUpdate() that follows is deferred to the end of
+// ActivityManager::loop() -- so a second popup drawn in the same pass lands
+// inside the first one's, whose edges stay visible around it.
+// trySyncWallpapers() reads this and defers to the next pass rather than
+// drawing over it, the same hand-off trySyncLibrary() already makes to
+// itself after a Wi-Fi bring-up.
+bool librarySyncPopupUsedThisPass = false;
+
+// Context for the wallpaper sync's progress callback -- plain pointers, not
+// a capturing lambda (see CLAUDE.md's "Template and std::function Bloat").
+struct WallpaperProgressCtx {
+  GfxRenderer* renderer;
+  Rect popup;
+};
+
+void onWallpaperSyncProgress(void* ctxPtr, const uint32_t done, const uint32_t total) {
+  if (total == 0) return;
+  auto* ctx = static_cast<WallpaperProgressCtx*>(ctxPtr);
+  GUI.fillPopupProgress(*ctx->renderer, ctx->popup, static_cast<int>(done * 100 / total));
+}
 }  // namespace
 
 int HomeActivity::getMenuItemCount() const {
@@ -398,8 +428,10 @@ void HomeActivity::render(RenderLock&&) {
     // automatic library sync) was never reached at all.
     requestUpdate();
   } else {
+    librarySyncPopupUsedThisPass = false;
     trySyncLibrary();
     tryDeliverPendingBookFinished();
+    trySyncWallpapers();
   }
 }
 
@@ -430,6 +462,7 @@ void HomeActivity::trySyncLibrary() {
       // adding a near-duplicate one. Runs from render(), already on the
       // render task -- no RenderLock needed here, same reasoning as the
       // sync popup below.
+      librarySyncPopupUsedThisPass = true;
       GUI.drawPopup(renderer, tr(STR_CONNECTING_SAVED_WIFI));
       bool cancelled = false;
       // This runs on the render task, inside HomeActivity::render(), which
@@ -483,6 +516,7 @@ void HomeActivity::trySyncLibrary() {
 
   // Visible while it happens (task brief): same blocking-popup pattern
   // loadRecentCovers() already uses above.
+  librarySyncPopupUsedThisPass = true;
   GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
   // Bounded, but with its own budget rather than the shorter power-off one --
   // see SyncTriggerPolicy.h's HOME_SYNC_TIMEOUT_MS for why the two differ.
@@ -521,6 +555,52 @@ void HomeActivity::trySyncLibrary() {
     LOG_DBG("HOME", "Heartbeat piggybacked on library sync failed (error=%s status=%d) -- diagnostics only",
             heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
   }
+}
+
+void HomeActivity::trySyncWallpapers() {
+  // Never on a pass trySyncLibrary() already drew a popup on -- see
+  // librarySyncPopupUsedThisPass. Deliberately checked before the once-per-
+  // boot latch below, so deferring costs a render pass, not the whole sync.
+  if (librarySyncPopupUsedThisPass) return;
+  if (wallpaperSyncCheckedThisBoot) return;
+  wallpaperSyncCheckedThisBoot = true;
+
+  const uint16_t boots = APP_STATE.bootsSinceWallpaperSync;
+  if (!sync_trigger::shouldSyncWallpapers(SYNC_STORE.isPaired(), WiFi.status() == WL_CONNECTED,
+                                          /*alreadyAttemptedThisBoot=*/false, boots)) {
+    // This boot still counts toward the next sync. Saturating, and only
+    // written when it actually changes -- an unpaired reader that will never
+    // sync must not pay an SD write every boot forever.
+    if (SYNC_STORE.isPaired() && boots < UINT16_MAX) {
+      APP_STATE.bootsSinceWallpaperSync = static_cast<uint16_t>(boots + 1);
+      APP_STATE.saveToFile();
+    }
+    return;
+  }
+
+  // Same blocking-popup pattern as trySyncLibrary() and loadRecentCovers(),
+  // with loadRecentCovers()'s progress fill on top: each 96 KB wallpaper is
+  // seconds of blocking, so a bar that moves is the difference between "slow"
+  // and "hung". No new popup style.
+  const Rect popupRect = GUI.drawPopup(renderer, tr(STR_SYNCING_WALLPAPERS));
+  WallpaperProgressCtx progressCtx{&renderer, popupRect};
+  // The manifest page gets the library screen's own budget; each file
+  // download gets its own, longer one inside wallpaper_sync::sync().
+  const wallpaper_sync::SyncResult result =
+      wallpaper_sync::sync(sync_trigger::HOME_SYNC_TIMEOUT_MS, &onWallpaperSyncProgress, &progressCtx);
+  requestUpdate();  // redraw Home without the popup
+
+  if (!result.ok) {
+    // Leave the counter where it is: a failed sync must not buy itself
+    // another eight boots of silence.
+    LOG_DBG("HOME", "Wallpaper sync failed (error=%s status=%d)", result.error.c_str(), result.httpStatus);
+    return;
+  }
+  // Work left over (the per-sync download cap, or a file that failed) makes
+  // the next boot due again instead of resetting the cadence -- see
+  // SyncTriggerPolicy.h's WALLPAPER_SYNC_BOOT_INTERVAL.
+  APP_STATE.bootsSinceWallpaperSync = result.moreWorkPending ? sync_trigger::WALLPAPER_SYNC_BOOT_INTERVAL : 0;
+  APP_STATE.saveToFile();
 }
 
 void HomeActivity::tryDeliverPendingBookFinished() {

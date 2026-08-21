@@ -103,6 +103,14 @@ class HomeActivity final : public Activity {
   // for the next reboot.
   void tryDeliverPendingBookFinished();
   bool bookFinishedAttemptedThisVisit = false;
+  // Reconciles /.sleep against the wallpapers the server has assigned to this
+  // reader (src/sync/WallpaperSync.h). Runs after trySyncLibrary(), never on
+  // the same render pass as one of its popups, and -- unlike the library sync
+  // -- not on every boot: the cadence is a persisted boot count, since the
+  // board has no clock (see SyncTriggerPolicy.h's
+  // WALLPAPER_SYNC_BOOT_INTERVAL). Never brings Wi-Fi up itself; it rides on
+  // whatever the library sync's own bring-up left connected.
+  void trySyncWallpapers();
 
  public:
   explicit HomeActivity(GfxRenderer& renderer, MappedInputManager& mappedInput,

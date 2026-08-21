@@ -56,6 +56,7 @@ void CrossPointState::toJson(JsonDocument& doc) const {
   doc["pendingBookFinishedPath"] = pendingBookFinishedPath;
   doc["sleepWifiConsecutiveFailures"] = sleepWifiConsecutiveFailures;
   doc["sleepWifiSkipsRemaining"] = sleepWifiSkipsRemaining;
+  doc["bootsSinceWallpaperSync"] = bootsSinceWallpaperSync;
 }
 
 bool CrossPointState::fromJson(JsonVariantConst doc) {
@@ -96,5 +97,6 @@ bool CrossPointState::fromJson(JsonVariantConst doc) {
   pendingBookFinishedPath = doc["pendingBookFinishedPath"] | "";
   sleepWifiConsecutiveFailures = doc["sleepWifiConsecutiveFailures"] | static_cast<uint8_t>(0);
   sleepWifiSkipsRemaining = doc["sleepWifiSkipsRemaining"] | static_cast<uint8_t>(0);
+  bootsSinceWallpaperSync = doc["bootsSinceWallpaperSync"] | static_cast<uint16_t>(UINT16_MAX);
   return true;
 }
