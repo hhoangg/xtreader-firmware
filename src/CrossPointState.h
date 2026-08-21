@@ -67,6 +67,19 @@ class CrossPointState : public PersistableStore<CrossPointState> {
   // eight.
   uint16_t bootsSinceWallpaperSync = UINT16_MAX;
 
+  // The opaque wallpaper-set fingerprint the last *successful* wallpaper
+  // sync ran against, as the heartbeat reported it
+  // (telemetry::TelemetryResult::wallpaperRevision). Compared for equality
+  // only: a heartbeat that reports something different is what delivers a
+  // set edited from the web UI within one boot instead of waiting out
+  // WALLPAPER_SYNC_BOOT_INTERVAL -- see
+  // lib/SyncManifest/SyncTriggerPolicy.h's shouldSyncWallpapers(). Persisted
+  // for the same reason the fields above are: sleep is a full power cut. 0
+  // means "none stored", which is also what a state.json written before this
+  // field existed reads back as, and what the server guarantees a real
+  // revision never is.
+  uint32_t lastSyncedWallpaperRevision = 0;
+
   static const char* getFilePath() { return "/.crosspoint/state.json"; }
   void toJson(JsonDocument& doc) const;
   bool fromJson(JsonVariantConst doc);

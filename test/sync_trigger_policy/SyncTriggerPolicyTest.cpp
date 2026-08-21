@@ -101,36 +101,90 @@ TEST(SyncBeforeSleep, UnpairedOutsideReaderAndCleanStillFalse) {
   EXPECT_FALSE(shouldSyncBeforeSleep(false, false, false));
 }
 
+// No heartbeat revision on either side -- the state every test below
+// inherits unless it is specifically about the revision path.
+constexpr uint32_t NO_REVISION = 0;
+
 TEST(WallpaperSyncTrigger, FiresOnceTheBootIntervalHasPassed) {
   EXPECT_TRUE(shouldSyncWallpapers(/*paired=*/true, /*wifiConnected=*/true, /*alreadyAttemptedThisBoot=*/false,
-                                   WALLPAPER_SYNC_BOOT_INTERVAL));
+                                   WALLPAPER_SYNC_BOOT_INTERVAL, NO_REVISION, NO_REVISION));
 }
 
 TEST(WallpaperSyncTrigger, FiresOnADeviceThatHasNeverSynced) {
   // UINT16_MAX is CrossPointState's default, and also what a state.json
   // written before the field existed reads back as -- a freshly paired
   // reader must get its wallpapers now, not in eight boots.
-  EXPECT_TRUE(shouldSyncWallpapers(true, true, false, UINT16_MAX));
+  EXPECT_TRUE(shouldSyncWallpapers(true, true, false, UINT16_MAX, NO_REVISION, NO_REVISION));
 }
 
 TEST(WallpaperSyncTrigger, WaitsOutTheCadence) {
   for (uint16_t boots = 0; boots < WALLPAPER_SYNC_BOOT_INTERVAL; boots++) {
-    EXPECT_FALSE(shouldSyncWallpapers(true, true, false, boots)) << boots;
+    EXPECT_FALSE(shouldSyncWallpapers(true, true, false, boots, NO_REVISION, NO_REVISION)) << boots;
   }
 }
 
 TEST(WallpaperSyncTrigger, NeverFiresUnpaired) {
-  EXPECT_FALSE(shouldSyncWallpapers(/*paired=*/false, true, false, UINT16_MAX));
+  EXPECT_FALSE(shouldSyncWallpapers(/*paired=*/false, true, false, UINT16_MAX, NO_REVISION, NO_REVISION));
 }
 
 TEST(WallpaperSyncTrigger, NeverBringsWifiUpItself) {
   // Same rule as shouldAutoSync(): it rides on a connection something else
   // established, never one it pays for.
-  EXPECT_FALSE(shouldSyncWallpapers(true, /*wifiConnected=*/false, false, UINT16_MAX));
+  EXPECT_FALSE(shouldSyncWallpapers(true, /*wifiConnected=*/false, false, UINT16_MAX, NO_REVISION, NO_REVISION));
 }
 
 TEST(WallpaperSyncTrigger, NeverFiresTwiceInOneBoot) {
-  EXPECT_FALSE(shouldSyncWallpapers(true, true, /*alreadyAttemptedThisBoot=*/true, UINT16_MAX));
+  EXPECT_FALSE(
+      shouldSyncWallpapers(true, true, /*alreadyAttemptedThisBoot=*/true, UINT16_MAX, NO_REVISION, NO_REVISION));
+}
+
+TEST(WallpaperSyncTrigger, ChangedRevisionFiresLongBeforeTheCadence) {
+  // The whole point: "Add to device" in the web UI bumps the fingerprint, the
+  // next boot's heartbeat reports it, and the sync runs on boot 0 instead of
+  // in eight.
+  for (uint16_t boots = 0; boots < WALLPAPER_SYNC_BOOT_INTERVAL; boots++) {
+    EXPECT_TRUE(shouldSyncWallpapers(true, true, false, boots, /*heartbeatWallpaperRevision=*/43,
+                                     /*lastSyncedWallpaperRevision=*/42))
+        << boots;
+  }
+}
+
+TEST(WallpaperSyncTrigger, UnchangedRevisionDoesNotFireBeforeTheCadence) {
+  // Nothing moved server-side, so the cadence still owns the decision.
+  for (uint16_t boots = 0; boots < WALLPAPER_SYNC_BOOT_INTERVAL; boots++) {
+    EXPECT_FALSE(shouldSyncWallpapers(true, true, false, boots, 42, 42)) << boots;
+  }
+}
+
+TEST(WallpaperSyncTrigger, UnknownRevisionNeverFiresOnItsOwn) {
+  // 0 is "we didn't get one" -- no heartbeat this boot, it failed, or the
+  // server predates the field. It must never be read as "changed", whatever
+  // is stored, or every such boot would sync.
+  EXPECT_FALSE(shouldSyncWallpapers(true, true, false, 0, /*heartbeatWallpaperRevision=*/0,
+                                    /*lastSyncedWallpaperRevision=*/42));
+  EXPECT_FALSE(shouldSyncWallpapers(true, true, false, 0, 0, 0));
+}
+
+TEST(WallpaperSyncTrigger, UnknownRevisionDoesNotSuppressTheCadence) {
+  // The backstop has to keep working against a server that never sends the
+  // field -- that is the only path such a device has.
+  EXPECT_TRUE(shouldSyncWallpapers(true, true, false, WALLPAPER_SYNC_BOOT_INTERVAL, 0, 42));
+  EXPECT_TRUE(shouldSyncWallpapers(true, true, false, UINT16_MAX, 0, 0));
+}
+
+TEST(WallpaperSyncTrigger, FiresWhenNothingHasEverBeenStored) {
+  // First heartbeat on a device whose state.json predates the field: stored
+  // is 0, the server's revision is real, so the two differ and it syncs.
+  EXPECT_TRUE(shouldSyncWallpapers(true, true, false, 0, /*heartbeatWallpaperRevision=*/7,
+                                   /*lastSyncedWallpaperRevision=*/0));
+}
+
+TEST(WallpaperSyncTrigger, ChangedRevisionStillLosesToTheUnchangedGates) {
+  // A changed fingerprint is an extra reason to sync, never a bypass of the
+  // three gates every path shares.
+  EXPECT_FALSE(shouldSyncWallpapers(/*paired=*/false, true, false, UINT16_MAX, 43, 42));
+  EXPECT_FALSE(shouldSyncWallpapers(true, /*wifiConnected=*/false, false, UINT16_MAX, 43, 42));
+  EXPECT_FALSE(shouldSyncWallpapers(true, true, /*alreadyAttemptedThisBoot=*/true, UINT16_MAX, 43, 42));
 }
 
 }  // namespace

@@ -158,10 +158,18 @@ bool shouldSyncBeforeSleep(bool paired, bool isReaderActivity, bool dirty);
 // Wallpapers are the opposite of books in how often they change: books
 // arrive whenever their owner uploads one and the reader wants them on the
 // next visit, so the manifest sync runs every boot; a wallpaper set is
-// arranged once and then left alone for weeks. 8 boots is roughly a day of
-// ordinary use (this device reboots on every wake), which is the right
-// latency for "I attached a new picture from the web UI this morning" while
-// costing one extra TLS handshake a day rather than one per wake.
+// arranged once and then left alone for weeks.
+//
+// This cadence is the BACKSTOP, not how a newly attached wallpaper normally
+// arrives. Delivery is the heartbeat's job: every boot that gets WiFi up
+// already POSTs /devices/heartbeat, and the response carries an opaque
+// fingerprint of this device's assigned set, so a change made in the web UI
+// is picked up on the very next boot for zero extra requests and zero extra
+// TLS handshakes (see shouldSyncWallpapers()'s revision inputs below). The
+// count here only has to cover what that path cannot: a heartbeat that
+// failed, a server too old to send the field at all, and a fingerprint that
+// happens to collide with the stored one. 8 boots keeps that safety net
+// cheap -- one extra TLS handshake per 8 wakes rather than one per wake.
 //
 // A sync that had to stop early -- more assigned wallpapers were missing
 // than one sync will download (see lib/WallpaperSync/WallpaperReconcile.h's
@@ -171,7 +179,9 @@ bool shouldSyncBeforeSleep(bool paired, bool isReaderActivity, bool dirty);
 constexpr uint16_t WALLPAPER_SYNC_BOOT_INTERVAL = 8;
 
 // Pure decision for "should the wallpaper sync run right now?" -- the same
-// shape as shouldAutoSync() above, with one extra input.
+// shape as shouldAutoSync() above, with two independent reasons to fire:
+// the boot cadence has run out, or the heartbeat says the assigned set is
+// not the one this device last synced against.
 //  - paired / wifiConnected / alreadyAttemptedThisBoot: identical in meaning
 //    to shouldAutoSync()'s, including that this never brings WiFi up itself.
 //    It rides on whatever the library sync's own bring-up already
@@ -181,6 +191,21 @@ constexpr uint16_t WALLPAPER_SYNC_BOOT_INTERVAL = 8;
 //    wallpaper sync. Defaults to UINT16_MAX on a device that has never
 //    synced (or whose state.json predates the field), so a freshly paired
 //    reader gets its wallpapers on the first boot rather than in eight.
-bool shouldSyncWallpapers(bool paired, bool wifiConnected, bool alreadyAttemptedThisBoot, uint16_t bootsSinceLastSync);
+//  - heartbeatWallpaperRevision: the fingerprint this boot's heartbeat came
+//    back with (telemetry::TelemetryResult::wallpaperRevision), or 0 when
+//    there isn't one -- no heartbeat ran this boot, it failed, or the server
+//    predates the field.
+//  - lastSyncedWallpaperRevision:
+//    CrossPointState::lastSyncedWallpaperRevision, the fingerprint the last
+//    successful wallpaper sync ran against, 0 when none is stored.
+//
+// Both revisions are opaque: compared for equality, never for order. A
+// non-zero heartbeat revision that differs from the stored one fires a sync
+// immediately, which is what makes "Add to device" in the web UI land on the
+// next boot instead of within WALLPAPER_SYNC_BOOT_INTERVAL. 0 on either side
+// means "unknown" and is inert in both directions: it can never trigger a
+// sync on its own, and it never suppresses the cadence.
+bool shouldSyncWallpapers(bool paired, bool wifiConnected, bool alreadyAttemptedThisBoot, uint16_t bootsSinceLastSync,
+                          uint32_t heartbeatWallpaperRevision, uint32_t lastSyncedWallpaperRevision);
 
 }  // namespace sync_trigger

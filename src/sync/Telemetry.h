@@ -29,6 +29,16 @@ struct TelemetryResult {
   // at all), "http_status" (see httpStatus).
   std::string error;
   int httpStatus = -1;
+  // Only sendHeartbeat() ever fills this in; requestBooks() and
+  // bookFinished() leave it at 0. An opaque fingerprint of this device's
+  // assigned wallpaper set, from the heartbeat response's
+  // "wallpaperRevision" -- compared for equality only, never parsed for
+  // meaning and never ordered. 0 means "unknown": the field was absent (a
+  // server older than this feature), unusable, or the heartbeat failed. The
+  // server guarantees a real revision is never 0, which is what makes 0
+  // usable as that sentinel. Drives the revision path of
+  // sync_trigger::shouldSyncWallpapers().
+  uint32_t wallpaperRevision = 0;
 };
 
 // POST /devices/heartbeat. Every field is optional server-side except the

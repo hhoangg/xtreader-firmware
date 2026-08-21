@@ -57,6 +57,15 @@ bool libraryWifiBringUpAwaitingSyncResult = false;
 // be set on every path, not only the one that reaches the network.
 bool wallpaperSyncCheckedThisBoot = false;
 
+// The opaque wallpaper-set fingerprint this boot's heartbeat came back with
+// (0 = none, see telemetry::TelemetryResult::wallpaperRevision). Set by
+// trySyncLibrary(), read by trySyncWallpapers() -- which usually runs on a
+// *later* render pass than the heartbeat that filled this in, since it
+// defers whenever trySyncLibrary() drew a popup. A plain static for the same
+// reason as the latches above: it has to outlive both this render pass and
+// this HomeActivity instance, but never a reboot.
+uint32_t heartbeatWallpaperRevision = 0;
+
 // Set by trySyncLibrary() whenever it puts a popup on screen this render
 // pass. drawPopup() paints only its own box, sized to its own text, and the
 // requestUpdate() that follows is deferred to the end of
@@ -555,6 +564,11 @@ void HomeActivity::trySyncLibrary() {
     LOG_DBG("HOME", "Heartbeat piggybacked on library sync failed (error=%s status=%d) -- diagnostics only",
             heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
   }
+  // The one thing the heartbeat brings back that changes behaviour: how
+  // trySyncWallpapers() below learns the assigned set was edited without
+  // waiting out the boot cadence. 0 on any failure, which is exactly the
+  // "leave the cadence to it" value.
+  heartbeatWallpaperRevision = heartbeatResult.wallpaperRevision;
 }
 
 void HomeActivity::trySyncWallpapers() {
@@ -567,7 +581,8 @@ void HomeActivity::trySyncWallpapers() {
 
   const uint16_t boots = APP_STATE.bootsSinceWallpaperSync;
   if (!sync_trigger::shouldSyncWallpapers(SYNC_STORE.isPaired(), WiFi.status() == WL_CONNECTED,
-                                          /*alreadyAttemptedThisBoot=*/false, boots)) {
+                                          /*alreadyAttemptedThisBoot=*/false, boots, heartbeatWallpaperRevision,
+                                          APP_STATE.lastSyncedWallpaperRevision)) {
     // This boot still counts toward the next sync. Saturating, and only
     // written when it actually changes -- an unpaired reader that will never
     // sync must not pay an SD write every boot forever.
@@ -600,6 +615,13 @@ void HomeActivity::trySyncWallpapers() {
   // the next boot due again instead of resetting the cadence -- see
   // SyncTriggerPolicy.h's WALLPAPER_SYNC_BOOT_INTERVAL.
   APP_STATE.bootsSinceWallpaperSync = result.moreWorkPending ? sync_trigger::WALLPAPER_SYNC_BOOT_INTERVAL : 0;
+  // Recorded only on success, so a sync that never ran retries on the next
+  // boot. Stored verbatim, 0 included: 0 means "we don't know which set this
+  // ran against", and the next heartbeat that does know will differ from it
+  // and sync again -- one redundant sync, never a missed one. It does not
+  // defeat the moreWorkPending parking above either, since the cadence is an
+  // independent reason to sync.
+  APP_STATE.lastSyncedWallpaperRevision = heartbeatWallpaperRevision;
   APP_STATE.saveToFile();
 }
 

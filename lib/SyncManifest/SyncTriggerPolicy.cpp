@@ -20,8 +20,14 @@ bool shouldSyncBeforeSleep(const bool paired, const bool isReaderActivity, const
 }
 
 bool shouldSyncWallpapers(const bool paired, const bool wifiConnected, const bool alreadyAttemptedThisBoot,
-                          const uint16_t bootsSinceLastSync) {
-  return paired && wifiConnected && !alreadyAttemptedThisBoot && bootsSinceLastSync >= WALLPAPER_SYNC_BOOT_INTERVAL;
+                          const uint16_t bootsSinceLastSync, const uint32_t heartbeatWallpaperRevision,
+                          const uint32_t lastSyncedWallpaperRevision) {
+  // 0 is "unknown", never a real revision -- so it can only ever withhold
+  // this reason, not create one.
+  const bool revisionChanged =
+      heartbeatWallpaperRevision != 0 && heartbeatWallpaperRevision != lastSyncedWallpaperRevision;
+  return paired && wifiConnected && !alreadyAttemptedThisBoot &&
+         (bootsSinceLastSync >= WALLPAPER_SYNC_BOOT_INTERVAL || revisionChanged);
 }
 
 }  // namespace sync_trigger

@@ -6,6 +6,8 @@
 #include <HeartbeatPayload.h>
 #include <Logging.h>
 
+#include <utility>
+
 #include "SyncCredentialStore.h"
 #include "network/HttpDownloader.h"
 
@@ -13,7 +15,10 @@ namespace telemetry {
 
 namespace {
 
-TelemetryResult post(const std::string& path, const std::string& body, const uint32_t timeoutMs) {
+// outResponse, if non-null, receives the buffered response body -- only the
+// heartbeat has anything to read out of it (see parseWallpaperRevision()).
+TelemetryResult post(const std::string& path, const std::string& body, const uint32_t timeoutMs,
+                     std::string* outResponse = nullptr) {
   TelemetryResult result;
   if (!SYNC_STORE.isPaired()) {
     result.error = "not_paired";
@@ -45,7 +50,23 @@ TelemetryResult post(const std::string& path, const std::string& body, const uin
   if (!result.ok) {
     LOG_ERR("TELEM", "POST %s failed (ok=%d status=%d)", path.c_str(), ok, result.httpStatus);
   }
+  if (outResponse) *outResponse = std::move(response);
   return result;
+}
+
+// The heartbeat response's opaque wallpaper-set fingerprint. Anything the
+// contract does not guarantee -- absent, non-numeric, negative, zero, or
+// wider than uint32 -- reads back as 0 ("unknown"), so a server that
+// predates the field leaves wallpaper syncing exactly as it was.
+uint32_t parseWallpaperRevision(const std::string& body) {
+  if (body.empty()) return 0;
+  JsonDocument doc;
+  if (deserializeJson(doc, body) != DeserializationError::Ok) return 0;
+  // is<uint32_t>() is false for a string, a float, a negative and anything
+  // that does not fit -- exactly the set that must read back as 0.
+  JsonVariantConst revision = doc["wallpaperRevision"];
+  if (!revision.is<uint32_t>()) return 0;
+  return revision.as<uint32_t>();
 }
 
 }  // namespace
@@ -62,7 +83,12 @@ TelemetryResult sendHeartbeat(const HeartbeatInfo& info, const uint32_t timeoutM
 
   std::string body;
   serializeJson(doc, body);
-  return post("/devices/heartbeat", body, timeoutMs);
+  std::string response;
+  TelemetryResult result = post("/devices/heartbeat", body, timeoutMs, &response);
+  // Only a 2xx body is worth reading: an error body carries no revision, and
+  // leaving the field at 0 is what "unknown" already means.
+  if (result.ok) result.wallpaperRevision = parseWallpaperRevision(response);
+  return result;
 }
 
 HeartbeatInfo currentDeviceHeartbeatInfo() {
