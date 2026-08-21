@@ -44,6 +44,12 @@ bool manifestSyncAttemptedThisBoot = false;
 // already connected on its first Home visit never needs a bring-up attempt
 // at all, but must still gate the sync itself the usual way.
 bool libraryWifiConnectAttemptedThisBoot = false;
+
+// Set when a Wi-Fi bring-up this boot actually connected, and cleared once the
+// manifest sync that follows has reported whether the network was really
+// reachable. It has to outlive a single render pass because those two steps are
+// now deliberately split across passes -- see trySyncLibrary().
+bool libraryWifiBringUpAwaitingSyncResult = false;
 }  // namespace
 
 int HomeActivity::getMenuItemCount() const {
@@ -420,11 +426,10 @@ void HomeActivity::trySyncLibrary() {
   // connected (see SyncTriggerPolicy.h's shouldAttemptLibraryWifiConnect()
   // for why this is now worth doing -- nothing else in a production build
   // ever connects WiFi, so without this the automatic sync below never runs
-  // at all). `justAttemptedBringUp` tracks whether THIS call performed the
-  // attempt, so the back-off update after the sync below only fires for an
-  // attempt this function actually made, not for WiFi that happened to
+  // at all). libraryWifiBringUpAwaitingSyncResult tracks whether a bring-up
+  // this boot actually connected, so the back-off update after the sync only
+  // fires for an attempt this function made, not for WiFi that happened to
   // already be up for some unrelated reason.
-  bool justAttemptedBringUp = false;
   if (sync_trigger::shouldAttemptLibraryWifiConnect(SYNC_STORE.isPaired(), wifiConnected,
                                                     libraryWifiConnectAttemptedThisBoot)) {
     libraryWifiConnectAttemptedThisBoot = true;
@@ -458,19 +463,32 @@ void HomeActivity::trySyncLibrary() {
         // a search that was just deliberately cut short.
         return;
       }
-      justAttemptedBringUp = true;
       if (!wifiConnected) {
         // No network reached at all -- back off exactly as the sleep path
         // does when the search itself finds nothing (see
-        // SleepWifiBackoffPolicy.h). The sync below will no-op right after
-        // this (shouldAutoSync requires wifiConnected), so there is no
-        // second, more precise "did we reach the real internet" signal
-        // coming for this attempt.
+        // SleepWifiBackoffPolicy.h). shouldAutoSync requires wifiConnected, so
+        // there is nothing left to do this pass and no second, more precise
+        // "did we reach the real internet" signal coming for this attempt.
         sleep_progress_sync::saveWifiBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, false));
+        return;
       }
-      // else: leave the back-off update to the block below, once the
-      // manifest fetch itself proves whether more than just the access
-      // point was reached.
+
+      // Hand the sync itself to the NEXT render pass instead of falling
+      // through to it here.
+      //
+      // drawPopup() paints only its own box, sized to its own text, and the
+      // requestUpdate() above is deferred -- its flag is consumed at the end of
+      // ActivityManager::loop(), which cannot run while this render pass is
+      // still on the stack. Drawing the "Syncing library" popup from here
+      // therefore lands it on top of the wider "Connecting to saved Wi-Fi" one,
+      // whose edges stay visible around it. Returning lets the next pass clear
+      // the screen and repaint Home first, so the second popup opens on a clean
+      // screen -- the same hand-off loadRecentCovers() already makes to this
+      // function.
+      //
+      // The back-off update owed to this bring-up moves with it, via the flag.
+      libraryWifiBringUpAwaitingSyncResult = true;
+      return;
     }
   }
 
@@ -490,7 +508,8 @@ void HomeActivity::trySyncLibrary() {
   // FileBrowserActivity reads whatever landed on SD; syncResult itself is only used below.
   requestUpdate();  // redraw Home without the popup
 
-  if (justAttemptedBringUp) {
+  if (libraryWifiBringUpAwaitingSyncResult) {
+    libraryWifiBringUpAwaitingSyncResult = false;
     // The manifest fetch above is the first real proof this bring-up
     // reached more than just the access point -- a captive portal
     // associates too, then this fetch fails exactly like "no Wi-Fi here"
