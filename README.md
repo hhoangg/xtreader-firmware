@@ -24,7 +24,10 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 > would replace the fork.
 >
 > Everything below is upstream's documentation and still applies, except that the
-> clone URL and the release downloads point here.
+> clone URL and the release downloads point here, and that reading-progress sync
+> is configured by pairing with the xtreader server rather than by entering
+> KOReader sync credentials by hand. The KOSync protocol underneath is unchanged;
+> the screens for pointing the device at a third-party KOReader server are gone.
 
 ## What can CrossPoint do?
 
@@ -49,7 +52,6 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
   - WebDAV handler
   - AP mode (hotspot) and STA mode (join existing Wi-Fi), both with QR helpers
   - Calibre wireless connect flow
-  - OPDS browser with saved servers (up to 8), search, pagination, and direct download
   - OTA update checks and installs from this repository's GitHub releases
 
 - **Customization**: multiple themes (Classic, Lyra, Lyra Extended, RoundedRaff), sleep screen modes including transparent overlays, front/side button remapping, status bar controls, power-button behavior, refresh cadence, and more.

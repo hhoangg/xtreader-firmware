@@ -59,31 +59,7 @@ struct KOReaderProgress {
  */
 class KOReaderSyncClient {
  public:
-  enum Error {
-    OK = 0,
-    NO_CREDENTIALS,
-    NETWORK_ERROR,
-    AUTH_FAILED,
-    SERVER_ERROR,
-    JSON_ERROR,
-    NOT_FOUND,
-    LOW_MEMORY,
-    USER_EXISTS
-  };
-
-  /**
-   * Authenticate with the sync server (validate credentials).
-   * @return OK on success, error code on failure
-   */
-  static Error authenticate();
-
-  /**
-   * Register a new account on the sync server using the stored credentials
-   * (POST /users/create with the MD5 auth key — the server never sees the
-   * plain password).
-   * @return OK on success, USER_EXISTS if the username is taken
-   */
-  static Error createUser();
+  enum Error { OK = 0, NO_CREDENTIALS, NETWORK_ERROR, AUTH_FAILED, SERVER_ERROR, JSON_ERROR, NOT_FOUND, LOW_MEMORY };
 
   /**
    * Get reading progress for a document.
@@ -96,11 +72,11 @@ class KOReaderSyncClient {
   /**
    * Update reading progress for a document.
    * @param progress The progress data to upload
-   * @param timeoutMs TLS/HTTP deadline for this request. Defaults to the
-   *   ~15s an explicit KOSync action (KOReaderSyncActivity) already accepts;
-   *   an automatic caller with nobody watching (SleepProgressSync) passes a
-   *   much shorter bound instead so a captive portal or black-holed server
-   *   cannot stall it -- see SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS.
+   * @param timeoutMs TLS/HTTP deadline for this request. The 15s default is
+   *   a generous upper bound; an automatic caller with nobody watching
+   *   (SleepProgressSync) passes a much shorter one instead so a captive
+   *   portal or black-holed server cannot stall it -- see SyncTriggerPolicy.h's
+   *   AUTO_SYNC_TIMEOUT_MS.
    * @return OK on success, error code on failure
    */
   static Error updateProgress(const KOReaderProgress& progress, uint32_t timeoutMs = 15000);

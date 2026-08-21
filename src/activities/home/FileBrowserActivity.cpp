@@ -177,9 +177,8 @@ void FileBrowserActivity::rebuildRowItems() {
     // only place the reader looks after picking it -- the download itself runs on a background
     // task with nothing else on screen to report it. STR_BOOK_ON_SERVER/STR_BOOK_DOWNLOADING are
     // dedicated to this column, not STR_NOT_DOWNLOADED_YET/STR_DOWNLOADING: those are shared with
-    // screens that have a full line to spare (FontDownloadActivity, OpdsBookBrowserActivity) and
-    // must stay at their natural length, while this value slot is narrow and sits beside a
-    // wrapping title.
+    // screens that have a full line to spare (FontDownloadActivity) and must stay at their
+    // natural length, while this value slot is narrow and sits beside a wrapping title.
     // tr() pastes StrId:: onto its argument, so the choice has to happen outside the macro.
     rowValues[i] = placeholder
                        ? (isQueued(queueSnap, fileRemoteId[i]) ? tr(STR_BOOK_DOWNLOADING) : tr(STR_BOOK_ON_SERVER))

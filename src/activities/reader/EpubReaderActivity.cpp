@@ -28,7 +28,6 @@
 #include "EpubReaderUtils.h"
 #include "KOReaderCredentialStore.h"
 #include "KOReaderDocumentId.h"
-#include "KOReaderSyncActivity.h"
 #include "MappedInputManager.h"
 #include "ProgressMapper.h"
 #include "QrDisplayActivity.h"
@@ -424,9 +423,6 @@ void EpubReaderActivity::loop() {
           return;
         }
         break;
-      case CrossPointSettings::LP_MENU_KOSYNC:
-        if (mappedInput.getHeldTime() >= ReaderUtils::GO_HOME_MS && launchKOReaderSync()) return;
-        break;
       case CrossPointSettings::LP_MENU_DICTIONARY:
         if (mappedInput.getHeldTime() >= ReaderUtils::BOOKMARK_HOLD_MS) {
           openDictionaryWordSelect();
@@ -455,9 +451,6 @@ void EpubReaderActivity::loop() {
           bookmarkMessageTime = millis();
           requestUpdate();
         }
-        return;
-      case CrossPointSettings::LP_MENU_KOSYNC:
-        launchKOReaderSync();
         return;
       case CrossPointSettings::LP_MENU_DICTIONARY:
         if (!showDictionaryMessage) {
@@ -802,10 +795,6 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
       requestUpdate();
       break;
     }
-    case EpubReaderMenuActivity::MenuAction::SYNC: {
-      launchKOReaderSync();
-      break;
-    }
     case EpubReaderMenuActivity::MenuAction::BOOKMARKS: {
       startActivityForResult(
           std::make_unique<EpubReaderBookmarksActivity>(renderer, mappedInput, epub, epub->getPath()),
@@ -819,63 +808,16 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   }
 }
 
-bool EpubReaderActivity::launchKOReaderSync() {
-  if (!KOREADER_STORE.hasCredentials()) return false;
-
-  const int currentPage = section ? section->currentPage : nextPageNumber;
-  const int totalPages = section ? section->estimatedTotalPages() : cachedChapterTotalPageCount;
-  std::optional<uint16_t> paragraphIndex;
-  if (section && currentPage >= 0 && currentPage < section->pageCount) {
-    const uint16_t paragraphPage =
-        currentPage > 0 ? static_cast<uint16_t>(currentPage - 1) : static_cast<uint16_t>(currentPage);
-    if (const auto pIdx = section->getParagraphIndexForPage(paragraphPage)) {
-      paragraphIndex = *pIdx;
-    }
-  }
-
-  CrossPointPosition localPos = getCurrentPosition();
-  SavedProgressPosition localKoPos = ProgressMapper::toSavedProgress(epub, localPos);
-  const int tocIdx = epub->getTocIndexForSpineIndex(currentSpineIndex);
-  std::string localChapterName = (tocIdx >= 0) ? epub->getTocItem(tocIdx).title : "";
-  const std::string savedEpubPath = epub->getPath();
-
-  if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
-    LOG_ERR("KOSync", "Aborting sync because current progress could not be saved");
-    pendingSyncSaveError = true;
-    requestUpdate();
-    return true;
-  }
-
-  LOG_DBG("KOSync", "Releasing epub for sync (heap before: %u)", (unsigned)ESP.getFreeHeap());
-  {
-    RenderLock lock;
-    if (section) {
-      nextPageNumber = section->currentPage;
-    }
-    ImageBlock::setExtractor(nullptr, nullptr);
-    section.reset();
-    epub.reset();
-  }
-  LOG_DBG("KOSync", "Epub released (heap after: %u)", (unsigned)ESP.getFreeHeap());
-
-  activityManager.replaceActivity(std::make_unique<KOReaderSyncActivity>(
-      renderer, mappedInput, savedEpubPath, currentSpineIndex, currentPage, totalPages, std::move(localKoPos),
-      std::move(localChapterName), paragraphIndex));
-  return true;
-}
-
 bool EpubReaderActivity::hasUnsyncedProgress() const {
   if (!epub) return false;
   const int currentPage = section ? section->currentPage : nextPageNumber;
   return currentSpineIndex != syncBaselineSpineIndex || currentPage != syncBaselinePage;
 }
 
-// Headless sibling of launchKOReaderSync(): builds the exact same upload
-// payload performUpload() sends, but blocking and with no UI -- there is no
-// user present to resolve a remote/local conflict here, so this always
-// captures local progress unconditionally rather than fetching and comparing
-// remote state first (see this task's report for why "send what's on the
-// device" was chosen over "ask"). Called from main.cpp's enterDeepSleep() via
+// Builds the KOSync upload payload for the position the reader is on, blocking
+// and with no UI -- there is no user present to resolve a remote/local conflict
+// here, so this always captures local progress unconditionally rather than
+// fetching and comparing remote state first. Called from main.cpp's enterDeepSleep() via
 // ActivityManager::captureReaderProgressForSleep(), *before* goToSleep()
 // destroys this activity -- see this task's report for why the network
 // upload itself happens later, after the sleep screen has already painted,

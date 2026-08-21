@@ -141,15 +141,18 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   // Long-press Confirm action while reading an EPUB. The setting cycles through these values.
-  // Persisted in settings.json by index: any new function (e.g. dictionary, bookmark) MUST use a
-  // value >= 2 and be appended at the END of the enumValues array in SettingsList.h, otherwise the
-  // stored indices shift and existing saves are silently misinterpreted.
+  // Persisted in settings.json by index, so new functions MUST be appended at the END here and at
+  // the end of buildLongPressMenuValues()'s array in SettingsList.h; anything else shifts the
+  // stored indices and silently misinterprets existing saves.
+  //
+  // These values were renumbered when the manual KOReader Sync screen was removed and its slot at
+  // index 0 deleted. settings.json carries no version field, so no migration is possible: a device
+  // that had this set reads back the next function along and the owner has to pick it again once.
   enum LONG_PRESS_MENU_FUNCTION {
-    LP_MENU_KOSYNC = 0,
-    LP_MENU_DISABLED = 1,
-    LP_MENU_BOOKMARK = 2,
-    LP_MENU_DICTIONARY = 3,
-    LP_MENU_READER_MENU = 4,
+    LP_MENU_DISABLED = 0,
+    LP_MENU_BOOKMARK = 1,
+    LP_MENU_DICTIONARY = 2,
+    LP_MENU_READER_MENU = 3,
     LONG_PRESS_MENU_FUNCTION_COUNT
   };
 
@@ -165,7 +168,11 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   };
 
   // UI Theme
-  enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3 };
+  // Persisted in settings.json by index, so append new themes at the END.
+  // There is no _COUNT sentinel: UITheme::setTheme()'s switch has no default
+  // case, so every value here must have a case there or currentTheme is left
+  // unset and the device crashes on the first draw call.
+  enum UI_THEME { CLASSIC = 0, LYRA = 1, LYRA_3_COVERS = 2, ROUNDEDRAFF = 3, SHEET = 4 };
 
   // Image rendering in EPUB reader
   enum IMAGE_RENDERING { IMAGES_DISPLAY = 0, IMAGES_PLACEHOLDER = 1, IMAGES_SUPPRESS = 2, IMAGE_RENDERING_COUNT };
@@ -251,14 +258,6 @@ class CrossPointSettings : public PersistableStore<CrossPointSettings> {
   static constexpr uint8_t SCREEN_MARGIN_MAX = 40;
   static constexpr uint8_t SCREEN_MARGIN_STEP = 5;
   uint8_t screenMargin = SCREEN_MARGIN_MIN;
-  // OPDS download destination folder ("" = SD root). Global; edited from the
-  // OPDS server list. Persisted via a category-less SettingInfo::String in
-  // SettingsList.h, so it stays out of the on-device Settings screen.
-  char opdsDownloadFolder[64] = "";
-  // On-disk filename format for OPDS downloads (0=Author-Title default, 1=Title-Author,
-  // 2=Title). See OpdsFilenameFormat. Persisted via a category-less SettingInfo::Enum,
-  // edited from the OPDS server list; hidden from the on-device Settings screen.
-  uint8_t opdsFilenameFormat = 0;
   // Hide battery percentage
   uint8_t hideBatteryPercentage = HIDE_NEVER;
   // Long-press page turn button behavior

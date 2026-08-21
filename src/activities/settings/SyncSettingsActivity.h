@@ -43,8 +43,8 @@ class SyncSettingsActivity final : public UiListActivity {
   const char* headerTitle() const override;
 
   // Row storage: MENU_ITEMS is a compile-time constant, so fixed-capacity
-  // storage avoids any heap allocation for the row list, matching
-  // KOReaderSettingsActivity. Labels for rows whose text is static are set
+  // storage avoids any heap allocation for the row list. Labels for rows
+  // whose text is static are set
   // once in the constructor; buildScreen() refreshes only the live value
   // text (rowValues_) and the two rows whose label itself changes with
   // pairing state (status row's value, and the pair/unlink action labels).

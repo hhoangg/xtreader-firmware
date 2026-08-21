@@ -785,15 +785,13 @@ int main(int argc, char** argv) {
     // same column a normal row's extension uses) instead of a subtitle line
     // -- see FileBrowserActivity::rebuildRowItems(). There is no hard pixel
     // cap on that slot (list()/GfxRendererTarget::text() never truncates
-    // item.value; an over-wide value just eats into the label's space, same
-    // failure mode the Server URL row had), so "fits" here means "close to
-    // the width of EPUB", the reference for what already reads as a short
-    // tag in that column, not a hard pass/fail line. STR_BOOK_ON_SERVER/
-    // STR_BOOK_DOWNLOADING are dedicated to this column so the shared
-    // STR_NOT_DOWNLOADED_YET/STR_DOWNLOADING (FontDownloadActivity,
-    // OpdsBookBrowserActivity -- both have a full line to spare) can stay at
-    // their natural length; printed below to confirm they were restored, not
-    // trimmed to fit this column.
+    // item.value; an over-wide value just eats into the label's space), so
+    // "fits" here means "close to the width of EPUB", the reference for what
+    // already reads as a short tag in that column, not a hard pass/fail line.
+    // STR_BOOK_ON_SERVER/STR_BOOK_DOWNLOADING are dedicated to this column so
+    // the shared STR_NOT_DOWNLOADED_YET/STR_DOWNLOADING (FontDownloadActivity
+    // -- a full line to spare) can stay at their natural length; printed below
+    // to confirm they were restored, not trimmed to fit this column.
     const int epubW = probe.widthOf(0, "EPUB", EpdFontFamily::REGULAR);
     std::fprintf(stderr, "\n--- File browser value-column width (Ubuntu 10pt regular; \"EPUB\" reference = %dpx) ---\n",
                  epubW);

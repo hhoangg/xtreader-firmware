@@ -180,8 +180,10 @@ inline SettingInfo buildDictionarySetting(const std::vector<DictionaryEntry>& di
 }
 
 inline std::vector<StrId> buildLongPressMenuValues() {
-  static constexpr StrId VALUES[] = {StrId::STR_KOSYNC, StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION,
-                                     StrId::STR_DICTIONARY, StrId::STR_READER_MENU};
+  // Indexed by LONG_PRESS_MENU_FUNCTION. The trailing entry (Reader menu) only
+  // exists on boards whose capacitive Home key supplies the long press.
+  static constexpr StrId VALUES[] = {StrId::STR_DISABLED, StrId::STR_BOOKMARK_OPTION, StrId::STR_DICTIONARY,
+                                     StrId::STR_READER_MENU};
   const size_t count = BoardConfig::hasHomeKey() ? std::size(VALUES) : std::size(VALUES) - 1;
   return {VALUES, VALUES + count};
 }
@@ -237,7 +239,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
             "refreshFrequency", StrId::STR_CAT_DISPLAY),
         SettingInfo::Enum(StrId::STR_UI_THEME, &CrossPointSettings::uiTheme,
                           {StrId::STR_THEME_CLASSIC, StrId::STR_THEME_LYRA, StrId::STR_THEME_LYRA_EXTENDED,
-                           StrId::STR_THEME_ROUNDEDRAFF},
+                           StrId::STR_THEME_ROUNDEDRAFF, StrId::STR_THEME_SHEET},
                           "uiTheme", StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SUNLIGHT_FADING_FIX, &CrossPointSettings::fadingFix, "fadingFix",
                             StrId::STR_CAT_DISPLAY),
@@ -340,16 +342,6 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
         SettingInfo::Toggle(StrId::STR_MOVE_FINISHED_TO_READ, &CrossPointSettings::moveFinishedToReadFolder,
                             "moveFinishedToReadFolder", StrId::STR_CAT_SYSTEM),
 
-        // OPDS download folder: persisted + web-exposed, but category-less so it
-        // is hidden from the on-device Settings screen (edited via OPDS UI).
-        SettingInfo::String(StrId::STR_OPDS_DOWNLOAD_FOLDER, &SETTINGS.opdsDownloadFolder[0],
-                            sizeof(SETTINGS.opdsDownloadFolder), "opdsDownloadFolder"),
-        // OPDS download filename format: persisted + web-exposed, category-less so it
-        // is hidden from the on-device Settings screen (cycled from the OPDS UI).
-        SettingInfo::Enum(StrId::STR_OPDS_FILENAME_FORMAT, &CrossPointSettings::opdsFilenameFormat,
-                          {StrId::STR_FMT_AUTHOR_TITLE, StrId::STR_FMT_TITLE_AUTHOR, StrId::STR_FMT_TITLE},
-                          "opdsFilenameFormat"),
-
         // Frontlight quick-panel state: persisted and web-exposed, but hidden
         // from the on-device Settings screen because the swipe panel owns it.
         SettingInfo::Value(StrId::STR_BRIGHTNESS, &CrossPointSettings::frontlightBrightness, {0, 100, 5},
@@ -359,28 +351,10 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
 #endif
         SettingInfo::Toggle(StrId::STR_FRONTLIGHT, &CrossPointSettings::frontlightOn, "frontlightOn"),
 
-        // --- KOReader Sync (web-only, uses KOReaderCredentialStore) ---
-        SettingInfo::DynamicString(
-            StrId::STR_KOREADER_USERNAME, [] { return KOREADER_STORE.getUsername(); },
-            [](const std::string& v) {
-              KOREADER_STORE.setCredentials(v, KOREADER_STORE.getPassword());
-              KOREADER_STORE.saveToFile();
-            },
-            "koUsername", StrId::STR_KOREADER_SYNC),
-        SettingInfo::DynamicString(
-            StrId::STR_KOREADER_PASSWORD, [] { return KOREADER_STORE.getPassword(); },
-            [](const std::string& v) {
-              KOREADER_STORE.setCredentials(KOREADER_STORE.getUsername(), v);
-              KOREADER_STORE.saveToFile();
-            },
-            "koPassword", StrId::STR_KOREADER_SYNC),
-        SettingInfo::DynamicString(
-            StrId::STR_SYNC_SERVER_URL, [] { return KOREADER_STORE.getServerUrl(); },
-            [](const std::string& v) {
-              KOREADER_STORE.setServerUrl(v);
-              KOREADER_STORE.saveToFile();
-            },
-            "koServerUrl", StrId::STR_KOREADER_SYNC),
+        // --- Progress sync tuning (web-only, uses KOReaderCredentialStore).
+        // Pairing sets both of these; the web settings page is the only place
+        // they can be changed afterwards, so they are grouped with the
+        // pairing row below rather than under a category of their own.
         SettingInfo::DynamicEnum(
             StrId::STR_DOCUMENT_MATCHING, {StrId::STR_FILENAME, StrId::STR_BINARY},
             [] { return static_cast<uint8_t>(KOREADER_STORE.getMatchMethod()); },
@@ -388,7 +362,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
               KOREADER_STORE.setMatchMethod(static_cast<DocumentMatchMethod>(v));
               KOREADER_STORE.saveToFile();
             },
-            "koMatchMethod", StrId::STR_KOREADER_SYNC),
+            "koMatchMethod", StrId::STR_ACCOUNT_SYNC),
         SettingInfo::DynamicEnum(
             StrId::STR_SEND_METADATA, {StrId::STR_STATE_OFF, StrId::STR_STATE_ON},
             [] { return static_cast<uint8_t>(KOREADER_STORE.getSendMetadata()); },
@@ -396,15 +370,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
               KOREADER_STORE.setSendMetadata(v != 0);
               KOREADER_STORE.saveToFile();
             },
-            "koSendMetadata", StrId::STR_KOREADER_SYNC),
-        SettingInfo::DynamicEnum(
-            StrId::STR_SYNC_BEHAVIOR, {StrId::STR_ASK_EVERY_TIME, StrId::STR_SMART_SYNC},
-            [] { return static_cast<uint8_t>(KOREADER_STORE.getSyncBehavior()); },
-            [](uint8_t v) {
-              KOREADER_STORE.setSyncBehavior(static_cast<KOReaderSyncBehavior>(v));
-              KOREADER_STORE.saveToFile();
-            },
-            "koSyncBehavior", StrId::STR_KOREADER_SYNC),
+            "koSendMetadata", StrId::STR_ACCOUNT_SYNC),
         // --- CrossPoint Sync device pairing (device UI: SyncSettingsActivity /
         // SyncPairingActivity; uses SyncCredentialStore, which persists to NVS
         // rather than the SD card the other stores here use). Only the server

@@ -15,7 +15,6 @@ class HomeActivity final : public Activity {
   bool recentsLoading = false;
   bool recentsLoaded = false;
   bool firstRenderDone = false;
-  bool hasOpdsServers = false;
   bool coverRendered = false;      // Track if cover has been rendered once
   bool coverBufferStored = false;  // Track if cover buffer is stored
   uint8_t* coverBuffer = nullptr;  // HomeActivity's own buffer for cover image
@@ -31,40 +30,45 @@ class HomeActivity final : public Activity {
   const HomeMenuItem initialMenuItem;
 
   // Convert HomeMenuItem to menu index (used in onEnter)
-  static int menuItemToIndex(HomeMenuItem item, bool hasOpdsUrl) {
-    int i = 0;
-    if (item == HomeMenuItem::FILE_BROWSER) return i;
-    ++i;
-    if (item == HomeMenuItem::RECENTS) return i;
-    ++i;
-    if (item == HomeMenuItem::OPDS_BROWSER) return hasOpdsUrl ? i : 0;
-    if (hasOpdsUrl) ++i;
-    if (item == HomeMenuItem::FILE_TRANSFER) return i;
-    ++i;
-    if (item == HomeMenuItem::SETTINGS_MENU) return i;
-    return 0;
+  static int menuItemToIndex(HomeMenuItem item) {
+    switch (item) {
+      case HomeMenuItem::FILE_BROWSER:
+        return 0;
+      case HomeMenuItem::RECENTS:
+        return 1;
+      case HomeMenuItem::FILE_TRANSFER:
+        return 2;
+      case HomeMenuItem::SETTINGS_MENU:
+        return 3;
+      default:
+        return 0;
+    }
   }
 
   // Convert menu index to HomeMenuItem (used in loop)
-  static HomeMenuItem indexToMenuItem(int idx, bool hasOpdsUrl) {
-    int i = 0;
-    if (idx == i++) return HomeMenuItem::FILE_BROWSER;
-    if (idx == i++) return HomeMenuItem::RECENTS;
-    if (hasOpdsUrl && idx == i++) return HomeMenuItem::OPDS_BROWSER;
-    if (idx == i++) return HomeMenuItem::FILE_TRANSFER;
-    if (idx == i) return HomeMenuItem::SETTINGS_MENU;
-    return HomeMenuItem::NONE;
+  static HomeMenuItem indexToMenuItem(int idx) {
+    switch (idx) {
+      case 0:
+        return HomeMenuItem::FILE_BROWSER;
+      case 1:
+        return HomeMenuItem::RECENTS;
+      case 2:
+        return HomeMenuItem::FILE_TRANSFER;
+      case 3:
+        return HomeMenuItem::SETTINGS_MENU;
+      default:
+        return HomeMenuItem::NONE;
+    }
   }
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onRecentsOpen();
   void onSettingsOpen();
   void onFileTransferOpen();
-  void onOpdsBrowserOpen();
 
   int getMenuItemCount() const;
-  // The menu's text labels, in display order (File Browser/Recents/[OPDS
-  // Browser]/File Transfer/Settings, with Continue Reading prepended when
+  // The menu's text labels, in display order (File Browser/Recents/File
+  // Transfer/Settings, with Continue Reading prepended when
   // the active theme's homeContinueReadingInMenu is set and there's a
   // recent book). Factored out of render() so CMD:SELECTED's accessor below
   // can report the same list without duplicating -- or drifting from --

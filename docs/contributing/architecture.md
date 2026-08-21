@@ -177,7 +177,7 @@ Server behavior:
 - WebDAV handler on the HTTP server
 - UDP discovery listener for upload clients
 - file operations backed by SD storage
-- browser APIs for file management, settings, fonts, OPDS servers, and saved Wi-Fi networks
+- browser APIs for file management, settings, fonts, and saved Wi-Fi networks
 - activity requests faster loop responsiveness while server is running
 
 Endpoint reference: `docs/webserver-endpoints.md`.

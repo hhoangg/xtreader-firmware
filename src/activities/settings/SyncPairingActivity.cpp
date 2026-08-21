@@ -72,9 +72,9 @@ void SyncPairingActivity::onEnter() {
 
 void SyncPairingActivity::onExit() {
   Activity::onExit();
-  // Matches KOReaderAuthActivity: a TLS session fragments the heap, so
-  // reboot silently rather than leave that behind for whatever screen comes
-  // next. Only worth doing if a request was actually attempted.
+  // A TLS session fragments the heap, so reboot silently rather than leave
+  // that behind for whatever screen comes next. Only worth doing if a request
+  // was actually attempted.
   if (didNetworkWork_ && WiFi.getMode() != WIFI_MODE_NULL) {
     WiFi.disconnect(false);
     delay(30);
@@ -97,10 +97,9 @@ void SyncPairingActivity::startWifi() {
     return;
   }
   // autoConnect = true (the default): reuse WifiSelectionActivity's own
-  // saved-network auto-connect exactly as KOReaderAuthActivity does: try the
-  // last-known network, then any other saved network by signal strength,
-  // falling back to its own picker only if none of that works. This screen
-  // does not build a custom network picker.
+  // saved-network auto-connect -- try the last-known network, then any other
+  // saved network by signal strength, falling back to its own picker only if
+  // none of that works. This screen does not build a custom network picker.
   startActivityForResult(std::make_unique<WifiSelectionActivity>(renderer, mappedInput),
                          [this](const ActivityResult& result) { onWifiResult(!result.isCancelled); });
 }
@@ -218,11 +217,9 @@ void SyncPairingActivity::onPaired(const DeviceTokenResponse& token) {
   SYNC_STORE.setPairing(token.accessToken, token.deviceId, token.deviceName, token.accountEmail);
 
   // Configure progress sync from the same response, so scanning the QR is
-  // the only setup step for both syncs -- this replaces whatever KOReader
-  // Sync was previously configured (a manual account on a third-party
-  // server, or an earlier pairing's credential), same as SYNC_STORE.setPairing()
-  // above just replaced the file-sync token. Progress already stored under a
-  // replaced third-party account is not carried over.
+  // the only setup step for both syncs -- this replaces any earlier pairing's
+  // KOSync credential, same as SYNC_STORE.setPairing() above just replaced the
+  // file-sync token. Progress stored under a replaced account is not carried over.
   if (token.kosyncKey[0] != '\0') {
     KOREADER_STORE.setProvisionedCredential(token.accountEmail, token.kosyncKey, SYNC_STORE.getBaseUrl());
     // BINARY (partial content MD5) survives the device renaming a book to
@@ -231,12 +228,12 @@ void SyncPairingActivity::onPaired(const DeviceTokenResponse& token) {
     // the synced position. It also matches real KOReader's own default, so a
     // KOReader app sharing this account needs no matching change either.
     KOREADER_STORE.setMatchMethod(DocumentMatchMethod::BINARY);
-    // Sync without asking. The reader this is built for cannot answer a
-    // question about sync conflicts and did not choose to have an account in
-    // the first place; leaving this on ASK_EVERY_TIME turns "pair once and
-    // forget" into a prompt on every book. A device that had been set to ask
-    // was set that way for a server it is no longer talking to.
-    KOREADER_STORE.setSyncBehavior(KOReaderSyncBehavior::SMART);
+    // Send title/author with every progress upload. It defaults off (KOSync's
+    // own metadata field is optional and the reference server ignores it), and
+    // nothing else turns it on, so without this a paired device would upload
+    // progress rows the server could only label by document hash -- the
+    // library and dashboard read title/author straight off those rows.
+    KOREADER_STORE.setSendMetadata(true);
     KOREADER_STORE.saveToFile();
   }
 

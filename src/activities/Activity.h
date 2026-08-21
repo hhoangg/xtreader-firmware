@@ -77,8 +77,8 @@ class Activity {
   // Test-console introspection (CMD:SELECTED): reports whatever row/icon is
   // currently highlighted, so a host script can drive menu navigation by
   // reading real UI content instead of counting rows (a hardcoded row index
-  // silently picks the wrong item once a conditional row -- e.g.
-  // HomeActivity's OPDS Browser icon -- shifts everything after it; probing
+  // silently picks the wrong item once a conditional row shifts everything
+  // after it; probing
   // by pressing CONFIRM and backing out is worse still, since it mutates
   // toggle settings in place and triggers real side effects like a Wi-Fi
   // scan on whatever it CONFIRMs along the way).

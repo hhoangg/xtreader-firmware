@@ -35,7 +35,6 @@
 #include "FileBrowserMerge.h"
 #include "KOReaderCredentialStore.h"
 #include "MappedInputManager.h"
-#include "OpdsServerStore.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
 #include "SyncCredentialStore.h"
@@ -490,7 +489,6 @@ void setup() {
   RECENT_BOOKS.loadFromFile();
   I18N.setLanguage(static_cast<Language>(SETTINGS.language));
   KOREADER_STORE.loadFromFile();
-  OPDS_STORE.loadFromFile();
   // NVS, not the SD card (see SyncCredentialStore.h) -- no SPI/RenderLock
   // dance needed, so it can load unconditionally at boot like the others.
   SYNC_STORE.load();
@@ -1507,11 +1505,13 @@ static void testConsolePair() {
     if (!SYNC_STORE.setPairing(token.accessToken, token.deviceId, token.deviceName, token.accountEmail)) {
       outcome = "persist_failed";
     } else if (token.kosyncKey[0] != '\0') {
-      // Same three calls as SyncPairingActivity::onPaired(): provisions the
-      // progress-sync credential from the same pairing response and matches
-      // by content hash so a renamed book does not lose synced position.
+      // Same calls as SyncPairingActivity::onPaired(): provisions the
+      // progress-sync credential from the same pairing response, matches by
+      // content hash so a renamed book does not lose synced position, and
+      // sends title/author so server-side progress rows are labelled.
       KOREADER_STORE.setProvisionedCredential(token.accountEmail, token.kosyncKey, SYNC_STORE.getBaseUrl());
       KOREADER_STORE.setMatchMethod(DocumentMatchMethod::BINARY);
+      KOREADER_STORE.setSendMetadata(true);
       KOREADER_STORE.saveToFile();
       progressSyncProvisioned = true;
     }

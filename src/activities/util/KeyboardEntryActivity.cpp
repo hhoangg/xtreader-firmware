@@ -86,8 +86,7 @@ const fui::KeyboardKey URL_SNIP_ROW1[] = {UK("https://", "https://", 2001), UK("
                                           UK(".com", ".com", 2003)};
 const fui::KeyboardKey URL_SNIP_ROW2[] = {UK("http://", "http://", 2004), UK("192.168.", "192.168.", 2005),
                                           UK(".org", ".org", 2006)};
-const fui::KeyboardKey URL_SNIP_ROW3[] = {UK("/opds", "/opds", 2007), UK(":8080", ":8080", 2008),
-                                          UK(".net", ".net", 2009)};
+const fui::KeyboardKey URL_SNIP_ROW3[] = {UK(":8080", ":8080", 2008), UK(".net", ".net", 2009)};
 const fui::KeyboardKey URL_SNIP_BOTTOM[] = {UKS("abc", fui::KeyKind::Mode, fui::QWERTY_KEY_MODE, 2),
                                             UKW("URL", nullptr, URL_PANEL_VALUE, 2),
                                             UKS("Del", fui::KeyKind::Delete, fui::QWERTY_KEY_BACKSPACE, 2),
@@ -103,7 +102,7 @@ const fui::KeyboardRow URL_ROWS[] = {
 const fui::KeyboardRow URL_SHIFT_ROWS[] = {
     {URL_NUM_ROW, 10, 0}, {URL_SHIFT_ROW1, 10, 0}, {URL_SHIFT_ROW2, 9, 1}, {URL_SHIFT_ROW3, 9, 0}, {URL_BOTTOM, 6, 0}};
 const fui::KeyboardRow URL_SNIP_ROWS[] = {
-    {URL_SNIP_ROW1, 3, 0}, {URL_SNIP_ROW2, 3, 0}, {URL_SNIP_ROW3, 3, 0}, {URL_SNIP_BOTTOM, 4, 0}};
+    {URL_SNIP_ROW1, 3, 0}, {URL_SNIP_ROW2, 3, 0}, {URL_SNIP_ROW3, 2, 0}, {URL_SNIP_BOTTOM, 4, 0}};
 
 const fui::KeyboardLayout URL_LAYOUT{URL_ROWS, 5};
 const fui::KeyboardLayout URL_SHIFT_LAYOUT{URL_SHIFT_ROWS, 5};

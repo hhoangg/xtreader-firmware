@@ -25,8 +25,8 @@ class HttpDownloader {
   };
 
   // Per-socket-op deadline used by every call below that doesn't pass its own
-  // timeoutMs -- tuned for OPDS catalogs and book downloads, which can be
-  // slow to send headers or stall mid-body on a slow CDN. crosspoint-sync's
+  // timeoutMs -- tuned for book and firmware downloads, which can be slow to
+  // send headers or stall mid-body on a slow CDN. crosspoint-sync's
   // own small JSON/manifest endpoints pass a much shorter deadline instead
   // (see lib/SyncManifest/SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS /
   // EXPLICIT_SYNC_TIMEOUT_MS) so a captive portal or black-holed server can't

@@ -47,8 +47,7 @@ Menu rows are found by reading them, not by counting or probing. Earlier
 versions of this scenario tried two things that both turned out wrong:
 
   1. A hardcoded row index. A row's position is data-dependent, not just
-     code-dependent -- HomeActivity.cpp inserts an "OPDS Browser" icon at a
-     fixed index only when the owner has an OPDS server configured, and any
+     code-dependent -- Home prepends one tile per recent book, and any
      Settings category can grow or shrink the same way. That picks the
      wrong row silently on any configuration other than the one it was
      measured against.
@@ -93,14 +92,14 @@ RENDER_SETTLE_S = 1.0
 MAX_BACK_TO_HOME_PRESSES = 8
 
 # Default bound for select_by_label()'s search -- comfortably more than
-# Home's menu (4 base icons + at most 1 conditional OPDS icon, plus however
-# many recent-book cover tiles precede them) or the SyncSettingsActivity hub
+# Home's menu (4 base icons, plus however many recent-book cover tiles
+# precede them) or the SyncSettingsActivity hub
 # (3 fixed rows) will ever have.
 SELECT_MAX_STEPS_DEFAULT = 12
 
-# Settings > System currently has up to 12 rows (Time to Sleep, Show Hidden
+# Settings > System currently has up to 11 rows (Time to Sleep, Show Hidden
 # Files, Remove Read from Recents, Move Finished to Read, Wi-Fi Networks,
-# KOReader Sync, Account Sync, OPDS Servers, Clear Reading Cache, Check for
+# KOReader Sync, Account Sync, Clear Reading Cache, Check for
 # Updates, SD Firmware Update, Language -- see SettingsList.h /
 # SettingsActivity.cpp::rebuildSettingsLists()); this only needs to be a
 # generous upper bound, not exact.

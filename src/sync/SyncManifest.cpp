@@ -76,8 +76,8 @@ HeapSample sampleHeap() {
   return HeapSample{static_cast<uint32_t>(ESP.getFreeHeap()), static_cast<uint32_t>(ESP.getMaxAllocHeap())};
 }
 
-// Matches OpdsBookBrowserActivity::handleSearchAction()'s local urlEncode
-// lambda (no shared helper exists yet in this codebase to reuse instead).
+// Percent-encodes a query value; no shared helper exists yet in this codebase
+// to reuse instead.
 std::string urlEncode(const std::string& s) {
   std::string out;
   out.reserve(s.size() * 3);

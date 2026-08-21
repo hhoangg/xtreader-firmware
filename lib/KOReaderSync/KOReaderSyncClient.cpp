@@ -49,19 +49,16 @@ constexpr uint32_t MIN_BLOCK_FOR_TLS = 20000;
 // Apply the shared KOSync auth headers after begin(). x-auth-* is the native
 // KOSync scheme; Basic auth is added for Calibre-Web-Automated compatibility.
 // Goes through KOREADER_STORE's effective* getters (see that class's header
-// comment), which prefer a device-paired provisioned credential over a
-// manually-entered one when both exist. A provisioned credential has no real
-// "password" -- the key itself is sent as a harmless Basic-auth placeholder,
-// since crosspoint-sync (the only server a provisioned credential ever
-// points at) never reads that header.
+// comment). The provisioned credential has no real "password" -- the key
+// itself is sent as a harmless Basic-auth placeholder, since crosspoint-sync
+// (the only server it ever points at) never reads that header.
 void applyAuthHeaders(freeink::SecureHttpClient& http) {
   const std::string username = KOREADER_STORE.effectiveUsername();
   const std::string keyMd5 = KOREADER_STORE.effectiveKeyMd5();
   http.addHeader("Accept", "application/vnd.koreader.v1+json");
   http.addHeader("x-auth-user", username);
   http.addHeader("x-auth-key", keyMd5);
-  const std::string password = KOREADER_STORE.hasProvisionedCredential() ? keyMd5 : KOREADER_STORE.getPassword();
-  const std::string credentials = username + ":" + password;
+  const std::string credentials = username + ":" + keyMd5;
   const String encoded = base64::encode(credentials.c_str());
   http.addHeader("Authorization", std::string("Basic ") + encoded.c_str());
 }
@@ -84,76 +81,6 @@ bool insufficientHeap() {
   return false;
 }
 }  // namespace
-
-KOReaderSyncClient::Error KOReaderSyncClient::authenticate() {
-  lastHttpCode = 0;
-  if (!KOREADER_STORE.hasEffectiveCredentials()) {
-    LOG_DBG("KOSync", "No credentials configured");
-    return NO_CREDENTIALS;
-  }
-
-  const std::string url = KOREADER_STORE.effectiveBaseUrl() + "/users/auth";
-  LOG_DBG("KOSync", "Authenticating: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
-  if (insufficientHeap()) return LOW_MEMORY;
-
-  freeink::SecureHttpClient http;
-  http.setInsecure();
-  if (!http.begin(url)) {
-    LOG_ERR("KOSync", "Bad URL: %s", url.c_str());
-    return NETWORK_ERROR;
-  }
-  applyAuthHeaders(http);
-  const int httpCode = http.GET();
-  http.end();
-  lastHttpCode = httpCode;
-
-  LOG_DBG("KOSync", "Auth response: %d", httpCode);
-
-  if (httpCode <= 0) return NETWORK_ERROR;
-  // Any 2xx is success. The reference kosync server answers 200, but
-  // KOSync-compatible implementations differ (BookLore/grimmory is a Spring
-  // service and uses the idiomatic codes) — see issue #2876.
-  if (httpCode >= 200 && httpCode < 300) return OK;
-  if (httpCode == 401) return AUTH_FAILED;
-  return SERVER_ERROR;
-}
-
-KOReaderSyncClient::Error KOReaderSyncClient::createUser() {
-  lastHttpCode = 0;
-  if (!KOREADER_STORE.hasCredentials()) {
-    LOG_DBG("KOSync", "No credentials configured");
-    return NO_CREDENTIALS;
-  }
-
-  const std::string url = KOREADER_STORE.getBaseUrl() + "/users/create";
-  LOG_DBG("KOSync", "Creating account: %s (heap: %u)", url.c_str(), (unsigned)ESP.getFreeHeap());
-  if (insufficientHeap()) return LOW_MEMORY;
-
-  JsonDocument doc;
-  doc["username"] = KOREADER_STORE.getUsername();
-  doc["password"] = KOREADER_STORE.getMd5Password();
-  std::string body;
-  serializeJson(doc, body);
-
-  freeink::SecureHttpClient http;
-  http.setInsecure();
-  if (!http.begin(url)) {
-    LOG_ERR("KOSync", "Bad URL: %s", url.c_str());
-    return NETWORK_ERROR;
-  }
-  http.addHeader("Accept", "application/vnd.koreader.v1+json");
-  http.addHeader("Content-Type", "application/json");
-  const int httpCode = http.sendRequest("POST", body);
-  http.end();
-  lastHttpCode = httpCode;
-
-  LOG_DBG("KOSync", "Create user response: %d", httpCode);
-
-  if (httpCode <= 0) return NETWORK_ERROR;
-  if (httpCode >= 200 && httpCode < 300) return OK;  // 2xx: created (see #2876)
-  if (httpCode == 402) return USER_EXISTS;
-  return SERVER_ERROR;
-}
 
 KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& documentHash,
                                                           KOReaderProgress& outProgress) {

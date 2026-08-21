@@ -79,7 +79,6 @@ class SyncPairingActivity final : public Activity {
 
   // Set once a network call has actually been attempted (POST /device/code
   // or a poll), so onExit() knows whether to disconnect + silentRestart()
-  // to release TLS-fragmented heap -- matches KOReaderAuthActivity, which
-  // does the same after its own network session.
+  // to release TLS-fragmented heap.
   bool didNetworkWork_ = false;
 };
