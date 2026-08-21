@@ -15,8 +15,11 @@ TEST(MiddleEllipsis, ValueExactlyAtLimitPassesThroughUnchanged) {
 TEST(MiddleEllipsis, EmptyValuePassesThroughUnchanged) { EXPECT_EQ(StringUtils::middleEllipsis("", 24), ""); }
 
 TEST(MiddleEllipsis, LongUrlKeepsHostPrefixAndTail) {
-  // The real value from the pairing hub's Server URL row that motivated
-  // this: too long to fit alongside the "Server URL" label.
+  // The workers.dev hostname this firmware defaulted to when the Server URL
+  // row was first written, and what motivated truncating at all: too long to
+  // fit alongside the "Server URL" label. Kept as the sample even though the
+  // default is now a short custom domain -- a self-hosted URL can be any
+  // length, so the long case is the one worth pinning.
   const std::string url = "crosspoint-sync.hoangxuan2402.workers.dev";
   const std::string result = StringUtils::middleEllipsis(url, 24);
   EXPECT_EQ(result.size(), 24u);

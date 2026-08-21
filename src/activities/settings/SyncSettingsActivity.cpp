@@ -44,10 +44,13 @@ enum RowIndex : int {
 // (listInset=20, listSidePadding=8 either side); "Server URL" sets in Ubuntu
 // 12pt regular (the row's label font) at 125px; the value (Ubuntu 10pt
 // regular) has an 8px valueInset and 10px textGap before it, leaving a
-// 281px budget. 30 is the exact-fit maximum for the production default
-// (crosspoint-sync.hoangxuan2402.workers.dev, 41 chars) that
+// 281px budget. 30 is the exact-fit maximum that
 // StringUtils::middleEllipsis() can keep within that budget alongside the
-// complete label -- 34 already clips it. middleEllipsis() is a
+// complete label -- 34 already clips it. That was measured against the
+// 41-character workers.dev hostname this firmware used to default to; the
+// default is now https://xtreader.com at 20 characters and never truncates
+// at all, so what the cap protects is a self-hosted URL, which can be any
+// length. middleEllipsis() is a
 // character-count heuristic, not a pixel measurement (see its own doc
 // comment), so a self-hosted hostname at the same character count but wider
 // glyphs (more digits/caps) could still clip the label at exactly 30 -- this

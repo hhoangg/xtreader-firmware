@@ -15,7 +15,17 @@ constexpr char KEY_ACCOUNT_EMAIL[] = "email";
 
 // Default CrossPoint Sync server; self-hosters point elsewhere via the
 // "Server URL" setting (see SettingsList.h / SyncSettingsActivity).
-constexpr char DEFAULT_SERVER_URL[] = "https://crosspoint-sync.hoangxuan2402.workers.dev";
+//
+// The custom domain rather than the workers.dev hostname it also answers on.
+// This string is what a fresh device sends /device/code to, and the server
+// mirrors that request's own origin straight back as verificationUriComplete
+// -- which is the string the pairing QR encodes. Point this at workers.dev
+// and every reader shows a QR for a hostname its owner never bought.
+//
+// Safe to change: a reader that is already paired keeps the URL it paired
+// against in NVS (see get/setServerUrl below), and the workers.dev hostname
+// stays live alongside this one, so only new pairings move.
+constexpr char DEFAULT_SERVER_URL[] = "https://xtreader.com";
 }  // namespace
 
 SyncCredentialStore& SyncCredentialStore::getInstance() {

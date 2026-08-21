@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from device_test import DeviceTestConsole, DeviceTestError  # noqa: E402
 
-DEFAULT_URL = "https://crosspoint-sync.hoangxuan2402.workers.dev/healthcheck"
+DEFAULT_URL = "https://xtreader.com/healthcheck"
 
 # Generous wall-clock budget for the whole probe: WiFi bring-up alone can take
 # up to TEST_WIFI_PER_NETWORK_TIMEOUT_MS (7s in src/main.cpp) per saved
