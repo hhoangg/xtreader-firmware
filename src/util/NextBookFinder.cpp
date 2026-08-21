@@ -8,8 +8,6 @@
 #include <algorithm>
 #include <string_view>
 
-#include "CrossPointSettings.h"
-
 namespace {
 constexpr size_t NAME_BUFFER_SIZE = 500;
 
@@ -57,7 +55,7 @@ std::vector<std::string> NextBookFinder::findNextBooks(const std::string& curren
       continue;
     }
     file.getName(nameBuffer.get(), NAME_BUFFER_SIZE);
-    if (!SETTINGS.showHiddenFiles && nameBuffer[0] == '.') {
+    if (nameBuffer[0] == '.') {
       continue;
     }
     if (!isSupportedBookFile(nameBuffer.get())) {

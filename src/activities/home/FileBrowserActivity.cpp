@@ -11,7 +11,6 @@
 
 #include <algorithm>
 
-#include "CrossPointSettings.h"
 #include "MappedInputManager.h"
 #include "SyncCredentialStore.h"
 #include "activities/network/WifiSelectionActivity.h"
@@ -74,8 +73,7 @@ void FileBrowserActivity::loadFiles() {
     for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
       file.getName(fileNameBuffer.get(), NAME_BUFFER_SIZE);
       const bool isDirectory = file.isDirectory();
-      if ((!SETTINGS.showHiddenFiles && fileNameBuffer[0] == '.') ||
-          strcmp(fileNameBuffer.get(), "System Volume Information") == 0) {
+      if (fileNameBuffer[0] == '.' || strcmp(fileNameBuffer.get(), "System Volume Information") == 0) {
         continue;
       }
 
@@ -110,7 +108,7 @@ void FileBrowserActivity::mergeRemoteEntries() {
   std::string prefix = basepath;
   if (prefix.empty() || prefix.back() != '/') prefix += "/";
 
-  file_browser_merge::FolderMerge merge(prefix, files, SETTINGS.showHiddenFiles);
+  file_browser_merge::FolderMerge merge(prefix, files);
   if (!sync_manifest::listByPrefix(prefix, &feedRemoteRecordToMerge, &merge)) {
     LOG_ERR("FileBrowser", "Remote index scan failed for %s", prefix.c_str());
     return;  // fall back to the local-only listing already in files/fileRemoteId

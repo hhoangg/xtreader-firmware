@@ -1050,7 +1050,7 @@ static void testConsoleBrowseFolder(const std::string& path) {
       char nameBuf[500];
       for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
         file.getName(nameBuf, sizeof(nameBuf));
-        if ((!SETTINGS.showHiddenFiles && nameBuf[0] == '.') || strcmp(nameBuf, "System Volume Information") == 0) {
+        if (nameBuf[0] == '.' || strcmp(nameBuf, "System Volume Information") == 0) {
           continue;
         }
         if (file.isDirectory()) {
@@ -1063,7 +1063,7 @@ static void testConsoleBrowseFolder(const std::string& path) {
     }
   }
 
-  file_browser_merge::FolderMerge merge(prefix, localNames, SETTINGS.showHiddenFiles);
+  file_browser_merge::FolderMerge merge(prefix, localNames);
   const auto onMatch = [](void* ctxPtr, const ManifestIndexRecord& record) -> bool {
     static_cast<file_browser_merge::FolderMerge*>(ctxPtr)->addRemoteRecord(record);
     return true;  // never stop early -- every record under this folder matters

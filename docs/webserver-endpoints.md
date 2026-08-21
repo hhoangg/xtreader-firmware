@@ -78,8 +78,8 @@ Response:
 ]
 ```
 
-Hidden dotfiles are omitted unless the device setting `showHiddenFiles` is
-enabled. `System Volume Information` and `XTCache` are always hidden/protected.
+Hidden dotfiles are always omitted. `System Volume Information` and `XTCache`
+are always hidden/protected.
 
 ### `GET /download`
 
@@ -243,7 +243,7 @@ Applies a partial settings update from a JSON object.
 ```bash
 curl -X POST \
   -H "Content-Type: application/json" \
-  -d '{"fontSize":2,"showHiddenFiles":1}' \
+  -d '{"fontSize":2,"embeddedStyle":1}' \
   http://crosspoint.local/api/settings
 ```
 

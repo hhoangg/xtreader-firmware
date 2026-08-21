@@ -54,7 +54,7 @@ TEST(IsRecognizedBookName, RejectsUnrecognizedExtension) {
 
 TEST(FolderMerge, NoIndexRendersALocalListingUnchanged) {
   // The "absent or empty index" case: nothing ever calls addRemoteRecord.
-  FolderMerge merge("/", {"A.epub", "Sub/"}, /*includeHidden=*/false);
+  FolderMerge merge("/", {"A.epub", "Sub/"});
   const auto& entries = merge.entries();
   ASSERT_EQ(entries.size(), 2u);
   EXPECT_EQ(entries[0].name, "A.epub");
@@ -64,7 +64,7 @@ TEST(FolderMerge, NoIndexRendersALocalListingUnchanged) {
 }
 
 TEST(FolderMerge, LocalOnlyBookIsUnaffectedByAnUnrelatedRemoteRecord) {
-  FolderMerge merge("/", {"Local.epub"}, false);
+  FolderMerge merge("/", {"Local.epub"});
   merge.addRemoteRecord(makeRecord("bok_1", "/Other.epub"));
   const auto& entries = merge.entries();
   ASSERT_EQ(entries.size(), 2u);
@@ -73,7 +73,7 @@ TEST(FolderMerge, LocalOnlyBookIsUnaffectedByAnUnrelatedRemoteRecord) {
 }
 
 TEST(FolderMerge, RemoteOnlyBookBecomesAPlaceholder) {
-  FolderMerge merge("/", {}, false);
+  FolderMerge merge("/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/Remote.epub"));
   const auto& entries = merge.entries();
   ASSERT_EQ(entries.size(), 1u);
@@ -82,7 +82,7 @@ TEST(FolderMerge, RemoteOnlyBookBecomesAPlaceholder) {
 }
 
 TEST(FolderMerge, BookPresentBothLocallyAndRemotelyAppearsOnceAndNotAsAPlaceholder) {
-  FolderMerge merge("/", {"Both.epub"}, false);
+  FolderMerge merge("/", {"Both.epub"});
   merge.addRemoteRecord(makeRecord("bok_1", "/Both.epub"));
   const auto& entries = merge.entries();
   ASSERT_EQ(entries.size(), 1u);
@@ -91,7 +91,7 @@ TEST(FolderMerge, BookPresentBothLocallyAndRemotelyAppearsOnceAndNotAsAPlacehold
 }
 
 TEST(FolderMerge, ServerOnlySubfolderAppearsAsANormalFolderNotAPlaceholder) {
-  FolderMerge merge("/", {}, false);
+  FolderMerge merge("/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/Sub/Book.epub"));
   const auto& entries = merge.entries();
   ASSERT_EQ(entries.size(), 1u);
@@ -100,7 +100,7 @@ TEST(FolderMerge, ServerOnlySubfolderAppearsAsANormalFolderNotAPlaceholder) {
 }
 
 TEST(FolderMerge, MultipleRecordsUnderTheSameSubfolderAddOnlyOneFolderEntry) {
-  FolderMerge merge("/", {}, false);
+  FolderMerge merge("/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/Sub/A.epub"));
   merge.addRemoteRecord(makeRecord("bok_2", "/Sub/B.epub"));
   merge.addRemoteRecord(makeRecord("bok_3", "/Sub/C.epub"));
@@ -108,56 +108,51 @@ TEST(FolderMerge, MultipleRecordsUnderTheSameSubfolderAddOnlyOneFolderEntry) {
 }
 
 TEST(FolderMerge, SubfolderAlreadyPresentLocallyIsNotDuplicated) {
-  FolderMerge merge("/", {"Sub/"}, false);
+  FolderMerge merge("/", {"Sub/"});
   merge.addRemoteRecord(makeRecord("bok_1", "/Sub/Book.epub"));
   EXPECT_EQ(merge.entries().size(), 1u);
 }
 
 TEST(FolderMerge, RecordMarkedDownloadedNeverBecomesAPlaceholder) {
-  FolderMerge merge("/", {}, false);
+  FolderMerge merge("/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/Remote.epub", /*downloaded=*/true));
   EXPECT_TRUE(merge.entries().empty());
 }
 
 TEST(FolderMerge, UnrecognizedExtensionIsSkipped) {
-  FolderMerge merge("/", {}, false);
+  FolderMerge merge("/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/notes.pdf"));
   EXPECT_TRUE(merge.entries().empty());
 }
 
 TEST(FolderMerge, RecordOutsideThePrefixIsIgnored) {
-  FolderMerge merge("/Sub/", {}, false);
+  FolderMerge merge("/Sub/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/Other/Book.epub"));
   EXPECT_TRUE(merge.entries().empty());
 }
 
-TEST(FolderMerge, HiddenLeafIsSkippedUnlessIncludeHiddenIsSet) {
-  FolderMerge hidden("/", {}, /*includeHidden=*/false);
-  hidden.addRemoteRecord(makeRecord("bok_1", "/.hidden.epub"));
-  EXPECT_TRUE(hidden.entries().empty());
-
-  FolderMerge shown("/", {}, /*includeHidden=*/true);
-  shown.addRemoteRecord(makeRecord("bok_1", "/.hidden.epub"));
-  ASSERT_EQ(shown.entries().size(), 1u);
-  EXPECT_EQ(shown.entries()[0].name, ".hidden.epub");
+TEST(FolderMerge, HiddenLeafIsAlwaysSkipped) {
+  FolderMerge merge("/", {});
+  merge.addRemoteRecord(makeRecord("bok_1", "/.hidden.epub"));
+  EXPECT_TRUE(merge.entries().empty());
 }
 
-TEST(FolderMerge, HiddenSubfolderIsSkippedUnlessIncludeHiddenIsSet) {
-  FolderMerge hidden("/", {}, /*includeHidden=*/false);
-  hidden.addRemoteRecord(makeRecord("bok_1", "/.trash/Book.epub"));
-  EXPECT_TRUE(hidden.entries().empty());
+TEST(FolderMerge, HiddenSubfolderIsAlwaysSkipped) {
+  FolderMerge merge("/", {});
+  merge.addRemoteRecord(makeRecord("bok_1", "/.trash/Book.epub"));
+  EXPECT_TRUE(merge.entries().empty());
 }
 
 TEST(FolderMerge, NestedFolderPrefixDerivesTheImmediateChildOnly) {
   // A record two levels below folderPrefix still only surfaces the immediate child folder name.
-  FolderMerge merge("/Kỹ năng/", {}, false);
+  FolderMerge merge("/Kỹ năng/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/Kỹ năng/Sub/Deep/Book.epub"));
   ASSERT_EQ(merge.entries().size(), 1u);
   EXPECT_EQ(merge.entries()[0].name, "Sub/");
 }
 
 TEST(FolderMerge, MixedFolderCombinesLocalPlaceholderAndRemoteFolderEntries) {
-  FolderMerge merge("/", {"Local.epub", "LocalFolder/"}, false);
+  FolderMerge merge("/", {"Local.epub", "LocalFolder/"});
   merge.addRemoteRecord(makeRecord("bok_1", "/Local.epub"));           // already local -- no placeholder
   merge.addRemoteRecord(makeRecord("bok_2", "/RemoteOnly.epub"));      // placeholder
   merge.addRemoteRecord(makeRecord("bok_3", "/LocalFolder/X.epub"));   // folder already local -- no dup
@@ -178,7 +173,7 @@ TEST(FolderMerge, MixedFolderCombinesLocalPlaceholderAndRemoteFolderEntries) {
 // FileBrowserActivity::loadFiles() finds when Storage.open(basepath) fails) must still list the
 // book(s) the remote index has under it.
 TEST(FolderMerge, ServerOnlyVietnameseFolderListsItsRemoteBook) {
-  FolderMerge merge("/Văn học/", {}, false);
+  FolderMerge merge("/Văn học/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/Văn học/Truyện Kiều.epub"));
   const auto& entries = merge.entries();
   ASSERT_EQ(entries.size(), 1u);
@@ -193,7 +188,7 @@ TEST(FolderMerge, ServerOnlyVietnameseFolderListsItsRemoteBook) {
 // a time; see loadFiles()'s "Up one level"/into-folder paths), so this exercises that a deep
 // prefix still surfaces its direct child correctly.
 TEST(FolderMerge, ServerOnlyFolderSeveralLevelsDeepListsItsRemoteChildren) {
-  FolderMerge merge("/A/B/C/", {}, false);
+  FolderMerge merge("/A/B/C/", {});
   merge.addRemoteRecord(makeRecord("bok_1", "/A/B/C/Deep.epub"));
   const auto& entries = merge.entries();
   ASSERT_EQ(entries.size(), 1u);
@@ -202,7 +197,7 @@ TEST(FolderMerge, ServerOnlyFolderSeveralLevelsDeepListsItsRemoteChildren) {
 }
 
 TEST(FolderMerge, TakeEntriesMovesOutAndEmptiesTheObject) {
-  FolderMerge merge("/", {"A.epub"}, false);
+  FolderMerge merge("/", {"A.epub"});
   auto taken = merge.takeEntries();
   ASSERT_EQ(taken.size(), 1u);
   EXPECT_EQ(taken[0].name, "A.epub");

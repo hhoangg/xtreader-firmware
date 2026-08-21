@@ -45,9 +45,7 @@ class FolderMerge {
   // folderPrefix must end in '/' (e.g. "/" for the root, "/Notes/" for a subfolder) -- how a
   // record's immediate child name is derived below. localNames is copied in: one folder's worth of
   // entries, matching the "no whole-index-in-RAM" budget this class exists to respect.
-  // includeHidden mirrors SETTINGS.showHiddenFiles for remote-only entries (dot-prefixed folder or
-  // file names); this class cannot see SETTINGS itself, so the caller resolves it once up front.
-  FolderMerge(std::string folderPrefix, std::vector<std::string> localNames, bool includeHidden);
+  FolderMerge(std::string folderPrefix, std::vector<std::string> localNames);
 
   // Feeds one record from a listByPrefix(folderPrefix) scan. The scan may report records several
   // folders below folderPrefix (see ManifestIndexQuery.h's prefix scan, which matches on the raw
@@ -73,7 +71,6 @@ class FolderMerge {
   bool hasEntry(const std::string& name) const;
 
   std::string prefix_;
-  bool includeHidden_;
   std::vector<MergedEntry> entries_;
   // Tracks the most recently added/seen remote subfolder name so consecutive records under the
   // same subfolder (guaranteed contiguous -- entries are scanned in sorted path order, see

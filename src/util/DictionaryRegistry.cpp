@@ -12,8 +12,8 @@ namespace DictionaryRegistry {
 namespace {
 
 // Dictionaries are looked up in both roots, in order. The hidden variant
-// lets users keep the folder out of the file browser (hidden by default,
-// see FileBrowserActivity's showHiddenFiles check).
+// lets users keep the folder out of the file browser, which never lists
+// dot-prefixed names.
 constexpr const char* DICT_ROOTS[] = {"/dictionaries", "/.dictionaries"};
 
 // Find the single .idx stem inside one dictionary folder. Returns false when

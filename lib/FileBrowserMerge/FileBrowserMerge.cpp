@@ -32,8 +32,8 @@ bool isRecognizedBookName(const std::string_view name) {
   return false;
 }
 
-FolderMerge::FolderMerge(std::string folderPrefix, std::vector<std::string> localNames, const bool includeHidden)
-    : prefix_(std::move(folderPrefix)), includeHidden_(includeHidden) {
+FolderMerge::FolderMerge(std::string folderPrefix, std::vector<std::string> localNames)
+    : prefix_(std::move(folderPrefix)) {
   entries_.reserve(localNames.size());
   for (auto& name : localNames) {
     entries_.push_back(MergedEntry{std::move(name), std::string()});
@@ -55,7 +55,7 @@ void FolderMerge::addRemoteRecord(const ManifestIndexRecord& record) {
   }
   const std::string relative = record.path.substr(prefix_.size());
   if (relative.empty()) return;
-  if (!includeHidden_ && relative.front() == '.') return;
+  if (relative.front() == '.') return;  // dot-prefixed names are never listed
 
   const size_t slash = relative.find('/');
   if (slash != std::string::npos) {
