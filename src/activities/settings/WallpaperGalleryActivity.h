@@ -114,7 +114,9 @@ class WallpaperGalleryActivity final : public Activity {
   static int tabIndex(wallpaper_gallery::Sort sort);
   const char* tabLabel(int index) const;
 
-  void reloadTab();
+  // `keepTabFocus` leaves the ring on the tab band instead of dropping it onto
+  // the first tile, so stepping through the tabs is one press per tab.
+  void reloadTab(bool keepTabFocus = false);
   void stepTab(int direction);
   bool fetchNextPage();
   // Ids on the page holding the current selection, in slot order.

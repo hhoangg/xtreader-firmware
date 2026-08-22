@@ -20,14 +20,13 @@ constexpr int MIN_COLUMN_GAP = 6;
 
 }  // namespace
 
-Layout layout(const Bounds& content, const int nameLineHeight, const int metaLineHeight) {
+Layout layout(const Bounds& content, const int nameLineHeight) {
   Layout out;
   out.nameLineHeight = std::max(nameLineHeight, 0);
-  out.metaLineHeight = std::max(metaLineHeight, 0);
 
   if (content.width <= 0 || content.height <= 0) return out;
 
-  const int captionHeight = CAPTION_GAP + NAME_LINES * out.nameLineHeight + META_LINES * out.metaLineHeight;
+  const int captionHeight = CAPTION_GAP + NAME_LINES * out.nameLineHeight;
 
   // Width first: three art boxes plus two gaps must fit the band.
   const int widthForArt = content.width - (COLUMNS - 1) * MIN_COLUMN_GAP;

@@ -16,7 +16,7 @@ using wallpaper_grid::Layout;
 // below already taken out.
 Bounds portraitContent() { return Bounds{20, 105, 440, 615}; }
 
-Layout portraitLayout() { return wallpaper_grid::layout(portraitContent(), 17, 15); }
+Layout portraitLayout() { return wallpaper_grid::layout(portraitContent(), 17); }
 
 }  // namespace
 
@@ -60,7 +60,7 @@ TEST(WallpaperGridLayout, ColumnsNeverOverlap) {
 // than run off the band, and it must keep its aspect ratio while doing so.
 TEST(WallpaperGridLayout, ShrinksTheArtRatherThanOverflowing) {
   const Bounds content{20, 105, 760, 300};
-  const Layout layout = wallpaper_grid::layout(content, 17, 15);
+  const Layout layout = wallpaper_grid::layout(content, 17);
   ASSERT_TRUE(layout.valid);
   EXPECT_LT(layout.artHeight, wallpaper_grid::ART_HEIGHT);
   EXPECT_LT(layout.artWidth, wallpaper_grid::ART_WIDTH);
@@ -75,12 +75,12 @@ TEST(WallpaperGridLayout, ShrinksTheArtRatherThanOverflowing) {
 }
 
 TEST(WallpaperGridLayout, ReportsAnUnusableBand) {
-  EXPECT_FALSE(wallpaper_grid::layout(Bounds{0, 0, 0, 0}, 17, 15).valid);
-  EXPECT_FALSE(wallpaper_grid::layout(Bounds{0, 0, 440, 60}, 17, 15).valid);
-  EXPECT_FALSE(wallpaper_grid::layout(Bounds{0, 0, 60, 615}, 17, 15).valid);
+  EXPECT_FALSE(wallpaper_grid::layout(Bounds{0, 0, 0, 0}, 17).valid);
+  EXPECT_FALSE(wallpaper_grid::layout(Bounds{0, 0, 440, 60}, 17).valid);
+  EXPECT_FALSE(wallpaper_grid::layout(Bounds{0, 0, 60, 615}, 17).valid);
 
   // An invalid layout yields empty rects rather than garbage coordinates.
-  const Bounds tile = wallpaper_grid::tileBounds(wallpaper_grid::layout(Bounds{0, 0, 0, 0}, 17, 15), 0);
+  const Bounds tile = wallpaper_grid::tileBounds(wallpaper_grid::layout(Bounds{0, 0, 0, 0}, 17), 0);
   EXPECT_EQ(tile.width, 0);
   EXPECT_EQ(tile.height, 0);
 }

@@ -216,7 +216,7 @@ bool WallpaperGalleryActivity::fetchNextPage() {
   return true;
 }
 
-void WallpaperGalleryActivity::reloadTab() {
+void WallpaperGalleryActivity::reloadTab(const bool keepTabFocus) {
   {
     RenderLock lock(*this);
     state_ = State::Loading;
@@ -238,7 +238,7 @@ void WallpaperGalleryActivity::reloadTab() {
     RenderLock lock(*this);
     state_ = State::Grid;
     // An empty tab has no tile to sit on, so the tab band keeps the focus.
-    ring_ = entries_.empty() ? RING_TABS : 1;
+    ring_ = (entries_.empty() || keepTabFocus) ? RING_TABS : 1;
   }
   ensurePageThumbs();
 }
@@ -246,7 +246,12 @@ void WallpaperGalleryActivity::reloadTab() {
 void WallpaperGalleryActivity::stepTab(const int direction) {
   const int next = (tabIndex(tab_) + direction + TAB_COUNT) % TAB_COUNT;
   tab_ = tabAt(next);
-  reloadTab();
+  // Switching tabs from the tab band leaves the focus ON the tab band, so the
+  // next press steps to the tab after this one. Without it the reload dropped
+  // the ring onto tile 1 and a second Confirm opened a preview instead --
+  // three tabs that could only be walked one step at a time. This is exactly
+  // what SettingsActivity::stepTab() does with `onTabBar`.
+  reloadTab(ring_ == RING_TABS);
 }
 
 std::vector<std::string> WallpaperGalleryActivity::pageIds() const {
@@ -708,7 +713,15 @@ std::string WallpaperGalleryActivity::formatSize(const uint64_t bytes) {
 
 wallpaper_grid::Bounds WallpaperGalleryActivity::contentBounds() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
-  const int top = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight;
+  // The tab band's own rule sits on its bottom edge, so without this the first
+  // row of art butts straight against it. The gap is `contentSidePadding` --
+  // the SAME number the band is inset by on the left and the right -- rather
+  // than `verticalSpacing`: this screen is a block of pictures, and the eye
+  // reads the frame around a block of pictures as one margin, so a top inset
+  // that differs from the side inset reads as a mistake even when nothing is
+  // clipped. (It also happens not to vary by theme, where verticalSpacing is
+  // 16 on Lyra and 10 on RoundedRaff/Sheet.)
+  const int top = metrics.topPadding + metrics.headerHeight + metrics.tabBarHeight + metrics.contentSidePadding;
   // One line under the grid carries the page counter (and, during the
   // placeholder pass, the thumbnail progress).
   const int statusHeight = renderer.getLineHeight(SMALL_FONT_ID) + metrics.verticalSpacing;
@@ -767,39 +780,19 @@ void WallpaperGalleryActivity::drawTile(const wallpaper_grid::Layout& layout, co
     renderer.drawLine(markX + size / 2 - 1, art.y + size - inset, markX + size - inset, art.y + inset, 2, false);
   }
 
-  // Caption: the name over at most two lines, then uploader and attach count.
-  const int textLeft = art.x;
-  const int textWidth = art.width;
-  int y = art.y + layout.tileHeight - layout.nameLineHeight * wallpaper_grid::NAME_LINES - layout.metaLineHeight;
+  // Caption: the name on one line, ellipsised rather than wrapped. The
+  // uploader and the attach count are deliberately not here -- the preview
+  // still names them, and a grid of pictures is scanned by picture.
+  const int nameY = art.y + layout.tileHeight - layout.nameLineHeight;
   const char* name = entry.name.empty() ? entry.id.c_str() : entry.name.c_str();
-  for (const std::string& line : renderer.wrappedText(SMALL_FONT_ID, name, textWidth, wallpaper_grid::NAME_LINES)) {
-    renderer.drawText(SMALL_FONT_ID, textLeft, y, line.c_str());
-    y += layout.nameLineHeight;
-  }
-
-  // On the "On Device" tab there is no uploader to name, so the file size takes
-  // that line instead of leaving it blank.
-  std::string meta;
-  if (!entry.ownerName.empty()) {
-    meta = entry.ownerName;
-    // ASCII separator on purpose: the built-in UI font's coverage is fixed, so
-    // a typographic middle dot would risk a missing-glyph box on some builds.
-    if (entry.attachCount > 0) meta += " - " + std::to_string(entry.attachCount);
-  } else if (entry.sizeBytes > 0) {
-    meta = formatSize(entry.sizeBytes);
-  }
-  if (!meta.empty()) {
-    const int metaY = art.y + layout.tileHeight - layout.metaLineHeight;
-    renderer.drawText(SMALL_FONT_ID, textLeft, metaY,
-                      renderer.truncatedText(SMALL_FONT_ID, meta.c_str(), textWidth).c_str());
-  }
+  renderer.drawText(SMALL_FONT_ID, art.x, nameY, renderer.truncatedText(SMALL_FONT_ID, name, art.width).c_str());
 }
 
 void WallpaperGalleryActivity::drawGrid() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   const wallpaper_grid::Bounds content = contentBounds();
   const int nameLineHeight = renderer.getLineHeight(SMALL_FONT_ID);
-  const wallpaper_grid::Layout layout = wallpaper_grid::layout(content, nameLineHeight, nameLineHeight);
+  const wallpaper_grid::Layout layout = wallpaper_grid::layout(content, nameLineHeight);
 
   if (entries_.empty()) {
     renderer.drawCenteredText(UI_10_FONT_ID, content.y + content.height / 2, tr(STR_WALLPAPER_NONE));
