@@ -15,10 +15,11 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 > `hhoangg/xtreader-firmware` is hhoangg's fork of
 > [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader). It
 > tracks upstream and adds the changes that pair the reader with
-> [**xtreader**](https://xtreader.com), a self-hostable sync server and web UI that holds this
-> device's library, reading progress and sleep-screen wallpapers. Its device-facing contract is
-> published at [xtreader.com/docs](https://xtreader.com/docs), so anything that speaks HTTP over TLS
-> can drive that server, not just this firmware.
+> [**xtreader**](https://xtreader.com), a sync server and web UI that holds this device's library,
+> reading progress and sleep-screen wallpapers. It is a running service you sign up for, not
+> something you have to stand up yourself; the book files stay in object storage you bring. Its
+> device-facing contract is published at [xtreader.com/docs](https://xtreader.com/docs), so another
+> reader firmware can point at the same server instead of building a sync backend of its own.
 >
 > **Releases and over-the-air updates come from this fork's
 > [releases page](https://github.com/hhoangg/xtreader-firmware/releases), not from upstream's.**
