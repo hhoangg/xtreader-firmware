@@ -15,10 +15,10 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 > `hhoangg/xtreader-firmware` is hhoangg's fork of
 > [crosspoint-reader/crosspoint-reader](https://github.com/crosspoint-reader/crosspoint-reader). It
 > tracks upstream and adds the changes that pair the reader with
-> [**xtreader**](https://github.com/hhoangg/xtreader) — the self-hostable sync server and web UI that
-> holds this device's library, reading progress and sleep-screen wallpapers. That repository carries
-> this one as a submodule under `firmware/`, and its device-facing contract is written up in
-> [docs/API.md](https://github.com/hhoangg/xtreader/blob/main/docs/API.md).
+> [**xtreader**](https://xtreader.com), a self-hostable sync server and web UI that holds this
+> device's library, reading progress and sleep-screen wallpapers. Its device-facing contract is
+> published at [xtreader.com/docs](https://xtreader.com/docs), so anything that speaks HTTP over TLS
+> can drive that server, not just this firmware.
 >
 > **Releases and over-the-air updates come from this fork's
 > [releases page](https://github.com/hhoangg/xtreader-firmware/releases), not from upstream's.**
@@ -169,10 +169,10 @@ Conversion runs the firmware repo's `lib/EpdFont/scripts/fontconvert_sdcard.py` 
 
 ### The xtreader server this fork pairs with
 
-- [hhoangg/xtreader](https://github.com/hhoangg/xtreader) — the sync server and web UI: what it is, how
-  to run it locally, and how to deploy it.
-- [Device API contract](https://github.com/hhoangg/xtreader/blob/main/docs/API.md) — pairing, KOSync
-  progress, the library manifest, wallpaper sync and telemetry, endpoint by endpoint.
+- [xtreader.com](https://xtreader.com) - what the sync server is, and what pairing a reader with it
+  gets you.
+- [Device API contract](https://xtreader.com/docs) - pairing, KOSync progress, the library manifest,
+  wallpaper sync and telemetry, endpoint by endpoint.
 
 ### This firmware
 
