@@ -45,6 +45,44 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 > the SD-card font builder are hosted at `crosspointreader.com` and are used exactly as described,
 > including for builds from this fork. `xtreader.com` hosts none of them.
 
+## What this fork adds
+
+Upstream's firmware is a reader. This fork makes it a reader that knows what is on it, where you
+stopped, and what to show while it sleeps — because a server it pairs with knows those things too.
+
+<p align="center">
+  <img src="./docs/images/xtreader-web-dashboard.webp" alt="The xtreader dashboard on a phone: two paired readers with battery and SD-card usage, and a year of sync activity as a heat map" width="30%">
+  <img src="./docs/images/xtreader-web-library.webp" alt="The xtreader library on a phone: folders and EPUB files with their sizes, each marked Synced" width="30%">
+  <img src="./docs/images/xtreader-web-wallpapers.webp" alt="The xtreader wallpapers page on a phone: a dithered black-and-white wallpaper with its orientation and the reader it is on" width="30%">
+</p>
+
+<p align="center">
+  <sub>Dashboard, Library and Wallpapers at <a href="https://xtreader.com">xtreader.com</a>.</sub>
+</p>
+
+- **Book sync.** Upload an EPUB in the browser and it appears on the reader; the reader tells the
+  server what it already has, so a sync moves only what is missing. The files themselves live in
+  object storage **you** own — the server keeps the index, not the books.
+
+- **Reading progress, both ways.** Where you stopped travels between the reader and the dashboard.
+  The wire protocol is KOSync, unchanged from upstream, but the credential is provisioned by
+  pairing instead of typed in — which is why the manual KOReader settings screens are gone.
+
+- **Wallpaper sync and a gallery on the device.** Assign lock-screen pictures from the browser and
+  they arrive over Wi-Fi, or browse what other people have shared from the reader itself (the
+  right-hand photo above). Uploads are dithered to the four greys the panel really emits before
+  they leave the browser, so what you preview is the file the device stores.
+
+- **A dashboard that does not lie about time.** The X4 has no clock, and sleep is a full reset, so
+  nothing on the device can date anything. Every timestamp is stamped by the server on arrival, and
+  the activity map says so: a cell is a day a sync arrived, not a day you read.
+
+- **Pairing by QR code.** Scan, approve on your phone, done. Nothing is ever typed on the reader —
+  no Wi-Fi password screen for the server, no account, no token.
+
+The device-facing contract is public at [xtreader.com/docs](https://xtreader.com/docs). It is not
+private to this firmware: anything that speaks HTTP over TLS can use the same server.
+
 ## What can CrossPoint do?
 
 - **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more. 
