@@ -360,3 +360,5 @@ Want to build your own device? Be sure to check out the [de-link](https://github
 CrossPoint Reader is **not affiliated with Xteink or any device manufacturer**.
 
 Huge shoutout to [diy-esp32-epub-reader](https://github.com/atomic14/diy-esp32-epub-reader), which inspired this project.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/M4M819OAC)
