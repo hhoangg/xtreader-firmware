@@ -1,1 +1,15 @@
+# The "Sponsor this project" panel on the repository page.
+#
+# Two entries, in the order they matter to somebody standing on THIS repo.
+#
+# `ko_fi` funds this fork: the sync integration, the wallpaper gallery, and
+# keeping the fork current with upstream. `custom` is upstream's own funding
+# link, inherited when this was forked and deliberately kept -- every line of
+# the reader engine underneath is theirs, and a fork quietly deleting the
+# original project's funding link would be taking the credit with the code.
+#
+# Requires the "Sponsorships" checkbox under Settings -> General -> Features;
+# this file alone does not display the panel. Must live on the default branch,
+# which is `develop` here, not `main`.
+ko_fi: hhoangg
 custom: ["https://app.royalty.dev/crosspoint-reader/crosspoint-reader"]
