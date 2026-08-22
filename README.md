@@ -36,6 +36,17 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 > the SD-card font builder are hosted at `crosspointreader.com` and are used exactly as described,
 > including for builds from this fork. `xtreader.com` hosts none of them.
 
+<p align="center">
+  <img src="./docs/images/xtreader-home.png" alt="The CrossPoint home screen on an Xteink X4" height="420">
+  &nbsp;&nbsp;&nbsp;
+  <img src="./docs/images/xtreader-gallery.png" alt="The wallpaper gallery on an Xteink X4, listing wallpapers held by the xtreader server" height="420">
+</p>
+
+<p align="center">
+  <sub>Home, and the wallpaper gallery this fork adds. Both are the X4's own 480&times;800 panel, read
+  out of the framebuffer over USB rather than photographed.</sub>
+</p>
+
 ## What can CrossPoint do?
 
 - **Reader engine**: EPUB 2/3 rendering with embedded-style option, image handling, hyphenation, kerning, chapter navigation, footnotes, bookmarks, dictionary lookups ([StarDict](docs/dictionary.md)), go-to-percent, auto page turn, orientation control, focus reading, KOReader progress sync and more. 
