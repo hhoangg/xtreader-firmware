@@ -3,7 +3,6 @@
 
 #include <memory>
 #include <string>
-#include <vector>
 
 #include "activities/UiListActivity.h"
 
@@ -11,25 +10,20 @@ class EpubReaderChapterSelectionActivity final : public UiListActivity {
   std::shared_ptr<Epub> epub;
   int currentSpineIndex = 0;
 
-  // Only the rows currently on screen are materialised.
-  //
-  // These used to hold one entry per TOC item, built once in onEnter(). A
-  // std::string plus a ListItem runs to roughly 100 bytes an entry, so a book
-  // with a few thousand chapters wanted hundreds of KB -- against the ~50 KB of
-  // heap a reading session leaves. Worse, the build is -fno-exceptions, so the
-  // failed reserve() did not return null: it called std::terminate() and
-  // rebooted the device the moment the chapter list was opened.
-  //
-  // The list widget is virtualised and only ever dereferences the rows it can
-  // fit (plus one partial trailing row), so buildScreen() fills these with just
-  // that slice, re-derived on every repaint. Cost is now constant in the size of
-  // the book. Each row still carries its absolute TOC index in
-  // ListItem::actionValue, so taps and the selection stay in absolute terms.
-  std::vector<std::string> windowLabels;
-  std::vector<freeink::ui::ListItem> windowItems;
-  // Absolute TOC index that windowItems[0] corresponds to.
-  int windowStart = 0;
-  void buildWindow(int start, int count);
+  // Windowed row buffers: TOC entries are SD-backed (BookMetadataCache LUT
+  // reads), so only the rows around the viewport are materialized. A
+  // several-hundred-entry TOC (547 in a large collection) built up front cost
+  // ~60KB of labels + ListItems — starving the CJK glyph arena into
+  // SD-per-repaint — for rows that were never drawn. The window follows
+  // nav.top via itemsWindowFirst (see fui::ListProps); refreshing it also
+  // batch-prewarms the window's fallback glyphs, so each page of the list
+  // pays one bounded SD pass and repaints stay RAM-only.
+  static constexpr int TOC_WINDOW = 24;
+  std::string windowLabels[TOC_WINDOW];
+  freeink::ui::ListItem windowItems[TOC_WINDOW];
+  int windowStart = -1;
+  int windowCount = 0;
+  void refreshTocWindow(int start);
 
   // Total TOC items count
   int listCount() const override { return epub ? epub->getTocItemsCount() : 0; }

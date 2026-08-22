@@ -671,6 +671,22 @@ void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction 
   switch (action) {
     case EpubReaderMenuActivity::MenuAction::SELECT_CHAPTER: {
       const int spineIdx = currentSpineIndex;
+      // Release the section while the chapter list is up (mirrors the
+      // TEXT_SETTINGS path): picking a chapter resets it anyway, and its
+      // tens-of-KB footprint is the difference between the chapter list
+      // holding its CJK glyph arena (RAM-only repaints) and re-reading
+      // glyphs from SD on every row step. Cancel restores via the same
+      // cached-position rebuild TEXT_SETTINGS uses.
+      {
+        RenderLock lock;
+        if (section) {
+          rememberCurrentContentOffset();
+          cachedSpineIndex = currentSpineIndex;
+          cachedChapterTotalPageCount = section->pageCount;
+          nextPageNumber = section->currentPage;
+        }
+        section.reset();
+      }
       startActivityForResult(
           std::make_unique<EpubReaderChapterSelectionActivity>(renderer, mappedInput, epub, spineIdx),
           [this](const ActivityResult& result) {
@@ -1392,6 +1408,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   auto* fcm = renderer.getFontCacheManager();
   auto scope = fcm->createPrewarmScope();
   page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
+  // Scan the status bar too: a CJK book/chapter title redirected to the SD
+  // fallback font joins the page's single batch prewarm instead of triggering
+  // its own SD pass after the scope ends.
+  renderStatusBar();
   scope.endScanAndPrewarm();
   const auto tPrewarm = millis();
 
@@ -1429,19 +1449,10 @@ void EpubReaderActivity::renderContents(std::unique_ptr<Page> page, const int or
   const auto tBwRender = millis();
 
   if (pageHasImages) {
-    int16_t imgX, imgY, imgW, imgH;
-    if (page->getImageBoundingBox(imgX, imgY, imgW, imgH)) {
-      if (cleanImageBasePending) {
-        renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-      }
-      renderer.fillRect(imgX + orientedMarginLeft, imgY + orientedMarginTop, imgW, imgH, false);
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-
-      page->render(renderer, fontId, orientedMarginLeft, orientedMarginTop);
-      renderer.displayBuffer(HalDisplay::FAST_REFRESH);
-    } else {
-      renderer.displayBuffer(HalDisplay::HALF_REFRESH);
-    }
+    // Image pages use one base refresh before the grayscale pass. FAST leaves
+    // the panel receptive to the gray waveform; pending cleanup still honors
+    // the scheduled/manual HALF refresh.
+    renderer.displayBuffer(cleanImageBasePending ? HalDisplay::HALF_REFRESH : HalDisplay::FAST_REFRESH);
     pagesUntilFullRefresh = 1;
   } else if (combinedGrayscaleBase) {
     // Stash the base without activating; displayGrayBuffer() below commits
