@@ -8,6 +8,16 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 
 > If you're planning to buy an Xteink device, consider purchasing an **X3/X4 Developer Edition** through https://crosspointreader.com. CrossPoint receives a small share of each sale, helping fund development costs.
 
+<p align="center">
+  <img src="./docs/images/xtreader-home.jpg" alt="An Xteink X4 showing the CrossPoint home screen: a book in progress at 17%, then Browse Files, Recent Books, File Transfer and Settings" height="440">
+  &nbsp;&nbsp;&nbsp;
+  <img src="./docs/images/xtreader-gallery.jpg" alt="The same reader showing the wallpaper gallery this fork adds: a three-column grid of dithered thumbnails from the xtreader server" height="440">
+</p>
+
+<p align="center">
+  <sub>Home, and the wallpaper gallery this fork adds, on an X4.</sub>
+</p>
+
 > ### This repository is a fork
 >
 > `hhoangg/xtreader-firmware` is hhoangg's fork of
@@ -34,16 +44,6 @@ CrossPoint is open-source e-reader firmware - community-built, fully hackable, f
 > The tool links below are upstream's and are correct as written — the unlocker, the web flasher and
 > the SD-card font builder are hosted at `crosspointreader.com` and are used exactly as described,
 > including for builds from this fork. `xtreader.com` hosts none of them.
-
-<p align="center">
-  <img src="./docs/images/xtreader-home.jpg" alt="An Xteink X4 showing the CrossPoint home screen: a book in progress at 17%, then Browse Files, Recent Books, File Transfer and Settings" height="440">
-  &nbsp;&nbsp;&nbsp;
-  <img src="./docs/images/xtreader-gallery.jpg" alt="The same reader showing the wallpaper gallery this fork adds: a three-column grid of dithered thumbnails from the xtreader server" height="440">
-</p>
-
-<p align="center">
-  <sub>Home, and the wallpaper gallery this fork adds, on an X4.</sub>
-</p>
 
 ## What can CrossPoint do?
 
