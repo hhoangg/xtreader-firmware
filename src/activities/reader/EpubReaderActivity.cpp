@@ -238,24 +238,35 @@ bool EpubReaderActivity::loadBook() {
   syncBaselineSpineIndex = currentSpineIndex;
   syncBaselinePage = nextPageNumber;
 
-  // The cache directory is named epub_<partial-content-MD5>, and
-  // KOReaderDocumentId::calculate computes that same hash from the same
-  // function (lib/FsHelpers/PartialContentHash.h), so the suffix already IS
-  // the KOSync document id -- reusing it avoids a second 12 KB read of the
-  // book. A suffix that is not 32 hex characters means the hash failed and
-  // resolveBookCacheDir fell back to the legacy path hash, which no server
-  // has ever seen; skip the check entirely rather than ask about a document
-  // id that cannot match.
-  const std::string cachePath = epub->getCachePath();
-  const auto underscore = cachePath.rfind('_');
-  if (underscore != std::string::npos) {
-    const std::string suffix = cachePath.substr(underscore + 1);
-    const bool looksLikeContentHash =
-        suffix.size() == 32 && suffix.find_first_not_of("0123456789abcdef") == std::string::npos;
-    if (looksLikeContentHash && KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::BINARY) {
-      remoteProgressDocumentHash = suffix;
-      remote_progress::start(remoteProgressDocumentHash);
+  // Same document id the before-sleep push uses (see
+  // captureProgressForSleep()), picked the same way: asking under a different
+  // id than this device uploads under would make the pull permanently silent
+  // for anyone on filename matching.
+  //
+  // FILENAME mode is a plain MD5 of the basename -- no file read, no cost.
+  // BINARY mode reuses the cache directory name instead of recomputing:
+  // it is epub_<partial-content-MD5> and KOReaderDocumentId::calculate
+  // computes that same hash from the same function
+  // (lib/FsHelpers/PartialContentHash.h), so the suffix already IS the
+  // document id, which saves a second 12 KB read of the book. A suffix that
+  // is not 32 hex characters means the hash failed and resolveBookCacheDir
+  // fell back to the legacy path hash, which no server has ever seen; that
+  // leaves the id empty and the check is skipped rather than asking about a
+  // document id that cannot match.
+  if (KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::FILENAME) {
+    remoteProgressDocumentHash = KOReaderDocumentId::calculateFromFilename(epub->getPath());
+  } else {
+    const std::string cachePath = epub->getCachePath();
+    const auto underscore = cachePath.rfind('_');
+    if (underscore != std::string::npos) {
+      const std::string suffix = cachePath.substr(underscore + 1);
+      if (suffix.size() == 32 && suffix.find_first_not_of("0123456789abcdef") == std::string::npos) {
+        remoteProgressDocumentHash = suffix;
+      }
     }
+  }
+  if (!remoteProgressDocumentHash.empty()) {
+    remote_progress::start(remoteProgressDocumentHash);
   }
 
   return true;
