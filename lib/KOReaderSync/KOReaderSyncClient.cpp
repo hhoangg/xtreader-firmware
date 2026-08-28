@@ -207,8 +207,16 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   }
   doc["progress"] = progress.progress;
   doc["percentage"] = progress.percentage;
-  doc["device"] = DEVICE_NAME;
-  doc["device_id"] = DEVICE_ID;
+  doc["device"] = progress.device.empty() ? DEVICE_NAME : progress.device;
+  // DEVICE_ID is the same literal on every CrossPoint reader in existence,
+  // which makes "did this row come from me?" unanswerable -- the question
+  // RemoteProgressPolicy has to answer before it interrupts anyone. A paired
+  // device fills progress.deviceId with the per-device id the sync server
+  // issued it (SyncCredentialStore); the constant remains the fallback for an
+  // unpaired or third-party-KOSync caller, and is also what every row written
+  // before this change carries, which is why the policy still reads it as
+  // self.
+  doc["device_id"] = progress.deviceId.empty() ? DEVICE_ID : progress.deviceId;
   if (progress.position.has_value() && KOREADER_STORE.effectiveUsesCrossPointSyncServer()) {
     // CrossPoint-specific extension: do not send it to third-party KOSync servers.
     const auto& p = *progress.position;

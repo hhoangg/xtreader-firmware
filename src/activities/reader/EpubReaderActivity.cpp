@@ -35,6 +35,7 @@
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
 #include "SdCardFontSystem.h"
+#include "SyncCredentialStore.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
@@ -866,6 +867,12 @@ bool EpubReaderActivity::captureProgressForSleep(KOReaderProgress& outProgress) 
   progress.document = documentHash;
   progress.progress = localKoPos.xpath;
   progress.percentage = localKoPos.percentage;
+  // Identifies this unit rather than "a CrossPoint reader", so the same
+  // account's other devices -- and this one, on its next open -- can tell
+  // whose position this is. Empty on an unpaired device, which leaves the
+  // client's own constant in place.
+  progress.device = SYNC_STORE.getDeviceName();
+  progress.deviceId = SYNC_STORE.getDeviceId();
 
   if (KOREADER_STORE.effectiveUsesCrossPointSyncServer()) {
     KOReaderRichPosition pos;
