@@ -78,7 +78,21 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress);
 // the .cpp).
 //
 // `cancelled` is set if the power button was pressed again during the
-// search -- the owner's escape hatch, same as trySyncBeforeSleep()'s.
+// search -- the owner's escape hatch, same as trySyncBeforeSleep()'s. It is
+// only ever set when `pollPowerButton` is true.
+//
+// `pollPowerButton` must be true only when the calling task is the loop
+// task, the one that owns MappedInputManager/HalGPIO and drives
+// gpio.update() every frame. Polling for the escape hatch means calling
+// gpio.update() from here, and InputManager::update() recomputes its
+// pressed/released edge words and mutates its debounce timers with no mutex
+// of its own: a background task calling it concurrently can clear a press
+// edge before the reader has read it (a silently dropped page turn) and
+// corrupt the long-press timing. Background callers (see
+// src/sync/RemoteProgressCheck.cpp) pass false and rely on
+// WIFI_CONNECT_TIMEOUT_MS alone to bound the search -- they are already
+// silent and already short, so there is nothing for the owner to escape
+// from.
 //
 // `callerHoldsRenderLock` must be true when the calling task already holds
 // ActivityManager's rendering mutex for the duration of this call (e.g.
@@ -92,7 +106,7 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress);
 // against itself forever. When true, this trusts the caller and skips
 // taking its own lock; when false, it takes one around the SD access, same
 // as before this parameter existed.
-bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock);
+bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock, bool pollPowerButton);
 
 // Loads/saves the back-off state shared by trySyncBeforeSleep() and
 // HomeActivity's library-screen Wi-Fi bring-up: both are "is there Wi-Fi

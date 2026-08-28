@@ -26,13 +26,18 @@ constexpr unsigned long PER_NETWORK_TIMEOUT_MS = 1500;
 
 // "Let the power button win" (task brief): a fresh press during the Wi-Fi
 // search is the owner's escape hatch if this ever takes longer than they are
-// willing to wait, regardless of budget/back-off tuning. gpio.update() is
-// safe to call repeatedly here -- this runs synchronously on the loop task
-// (enterDeepSleep() -> here), the same task that would otherwise be driving
-// MappedInputManager::update() -> gpio.update() every frame; nothing else
-// polls it concurrently while this loop blocks. wasPressed() is an edge, so
-// a button still held from the original power-off gesture does not
+// willing to wait, regardless of budget/back-off tuning. wasPressed() is an
+// edge, so a button still held from the original power-off gesture does not
 // re-trigger this -- it takes an actual release-then-press.
+//
+// gpio.update() is only safe to call from the task that already owns the
+// input manager -- the loop task, which drives MappedInputManager::update()
+// -> gpio.update() every frame. InputManager::update() recomputes its
+// pressed/released edge words from scratch and mutates its debounce and
+// long-press timers with no mutex, so a second task calling it concurrently
+// both corrupts those timers and can clear an edge the loop task has not
+// read yet, silently swallowing a page turn. Callers that do not run on the
+// loop task must pass pollPowerButton=false; see connectToSavedWifi().
 bool powerButtonPressedAgain() {
   gpio.update();
   return gpio.wasPressed(HalGPIO::BTN_POWER);
@@ -43,7 +48,7 @@ bool powerButtonPressedAgain() {
 // compiled into every build -- this is the one enterDeepSleep() actually
 // calls in production, not a test-console diagnostic.
 bool tryCredential(const std::string& ssid, const std::string& password, const unsigned long overallDeadlineMs,
-                   bool& cancelled) {
+                   bool& cancelled, const bool pollPowerButton) {
   WiFi.disconnect();
   delay(50);
   if (!password.empty()) {
@@ -55,7 +60,7 @@ bool tryCredential(const std::string& ssid, const std::string& password, const u
   const unsigned long perNetworkDeadline = millis() + PER_NETWORK_TIMEOUT_MS;
   while (static_cast<long>(millis() - perNetworkDeadline) < 0 && static_cast<long>(millis() - overallDeadlineMs) < 0) {
     resetTaskWatchdogIfSubscribed();
-    if (powerButtonPressedAgain()) {
+    if (pollPowerButton && powerButtonPressedAgain()) {
       cancelled = true;
       return false;
     }
@@ -91,7 +96,7 @@ void logStageJson(const char* stage, unsigned long elapsedMs) {
 
 }  // namespace
 
-bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock) {
+bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock, bool pollPowerButton) {
   if (WiFi.status() == WL_CONNECTED) return true;
 
   WiFi.mode(WIFI_STA);
@@ -103,7 +108,7 @@ bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock) {
 
 #ifdef CP_TEST_CONSOLE
   if (benchForceBogusNetwork) {
-    return tryCredential(BENCH_BOGUS_SSID, "", overallDeadline, cancelled);
+    return tryCredential(BENCH_BOGUS_SSID, "", overallDeadline, cancelled, pollPowerButton);
   }
 #endif
 
@@ -130,7 +135,7 @@ bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock) {
     const auto cred = WIFI_STORE.findCredential(lastSsid);
     if (cred) {
       triedLast = true;
-      if (tryCredential(cred->ssid, cred->password, overallDeadline, cancelled)) return true;
+      if (tryCredential(cred->ssid, cred->password, overallDeadline, cancelled, pollPowerButton)) return true;
       if (cancelled) return false;
     }
   }
@@ -138,7 +143,7 @@ bool connectToSavedWifi(bool& cancelled, bool callerHoldsRenderLock) {
   for (size_t i = 0; i < savedCount && static_cast<long>(millis() - overallDeadline) < 0; i++) {
     const auto cred = WIFI_STORE.getCredentialAt(i);
     if (!cred || (triedLast && cred->ssid == lastSsid)) continue;
-    if (tryCredential(cred->ssid, cred->password, overallDeadline, cancelled)) return true;
+    if (tryCredential(cred->ssid, cred->password, overallDeadline, cancelled, pollPowerButton)) return true;
     if (cancelled) return false;
   }
 
@@ -189,7 +194,7 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
   bool cancelled = false;
   // Runs on the main/loop task (enterDeepSleep() -> here), never the render
   // task -- see connectToSavedWifi()'s header comment for why this matters.
-  const bool wifiConnected = connectToSavedWifi(cancelled, /*callerHoldsRenderLock=*/false);
+  const bool wifiConnected = connectToSavedWifi(cancelled, /*callerHoldsRenderLock=*/false, /*pollPowerButton=*/true);
 #ifdef CP_TEST_CONSOLE
   logStageJson("sleep_sync_wifi", millis() - wifiStart);
 #endif

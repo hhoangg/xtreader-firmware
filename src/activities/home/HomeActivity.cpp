@@ -481,7 +481,10 @@ void HomeActivity::trySyncLibrary() {
       // not try to take it again itself, or the render task deadlocks
       // against itself (renderingMutex is not recursive). See that
       // function's header comment.
-      wifiConnected = sleep_progress_sync::connectToSavedWifi(cancelled, /*callerHoldsRenderLock=*/true);
+      // pollPowerButton=true keeps the owner's escape hatch on the visible,
+      // popup-blocked bring-up, exactly as before the parameter existed.
+      wifiConnected = sleep_progress_sync::connectToSavedWifi(cancelled, /*callerHoldsRenderLock=*/true,
+                                                              /*pollPowerButton=*/true);
       requestUpdate();  // redraw Home without the popup
 
       if (cancelled) {
