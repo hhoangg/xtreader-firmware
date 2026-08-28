@@ -83,7 +83,7 @@ bool insufficientHeap() {
 }  // namespace
 
 KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& documentHash,
-                                                          KOReaderProgress& outProgress) {
+                                                          KOReaderProgress& outProgress, const uint32_t timeoutMs) {
   lastHttpCode = 0;
   if (!KOREADER_STORE.hasEffectiveCredentials()) {
     LOG_DBG("KOSync", "No credentials configured");
@@ -95,6 +95,7 @@ KOReaderSyncClient::Error KOReaderSyncClient::getProgress(const std::string& doc
   if (insufficientHeap()) return LOW_MEMORY;
 
   freeink::SecureHttpClient http;
+  http.setTimeout(timeoutMs);
   http.setInsecure();
   if (!http.begin(url)) {
     LOG_ERR("KOSync", "Bad URL: %s", url.c_str());

@@ -65,9 +65,14 @@ class KOReaderSyncClient {
    * Get reading progress for a document.
    * @param documentHash The document hash (from KOReaderDocumentId)
    * @param outProgress Output: the progress data
+   * @param timeoutMs TLS/HTTP deadline for this request. Same contract as
+   *   updateProgress() below: the 15s default suits an explicit action, and
+   *   an automatic caller with nobody watching (RemoteProgressCheck, on
+   *   book open) passes SyncTriggerPolicy.h's AUTO_SYNC_TIMEOUT_MS instead so
+   *   a captive portal cannot stall it.
    * @return OK on success, NOT_FOUND if no progress exists, error code on failure
    */
-  static Error getProgress(const std::string& documentHash, KOReaderProgress& outProgress);
+  static Error getProgress(const std::string& documentHash, KOReaderProgress& outProgress, uint32_t timeoutMs = 15000);
 
   /**
    * Update reading progress for a document.
