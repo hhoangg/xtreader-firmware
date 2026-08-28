@@ -39,6 +39,7 @@ class Checker {
     requestedHash_ = documentHash;
     ready_ = false;
     haveProgress_ = false;
+    aborted_ = false;
     const BaseType_t created =
         xTaskCreate(&Checker::taskTrampoline, "RemoteProgress", WORKER_STACK_BYTES, this, 1, &taskHandle_);
     if (created != pdPASS) {
@@ -58,6 +59,18 @@ class Checker {
 
   void discard() {
     Lock lock(mutex_);
+    // Not a stop-and-join: waiting for the worker here would block the loop
+    // task -- and this is called from ~EpubReaderActivity, which power-off
+    // runs on the way into sleep. The worker reads this flag at every stage
+    // boundary and bails silently, so the residual window is one stage: a
+    // TLS handshake or HTTP request already in flight still has to finish or
+    // hit its own AUTO_SYNC_TIMEOUT_MS deadline. What the flag does buy is
+    // that the worker will not *start* a Wi-Fi search or a request after
+    // this, so it cannot fight the before-sleep push for the radio for more
+    // than that one already-bounded stage. On abort the worker also leaves
+    // the radio alone rather than tearing it down, because whoever is
+    // shutting this check down is very likely the one that wants it up.
+    aborted_ = true;
     ready_ = false;
     haveProgress_ = false;
     requestedHash_.clear();
@@ -72,9 +85,14 @@ class Checker {
 
   static void taskTrampoline(void* param) { static_cast<Checker*>(param)->run(); }
 
+  bool aborted() {
+    Lock lock(mutex_);
+    return aborted_;
+  }
+
   // Publishes nothing and releases the task slot. Used by every bail-out
-  // path, so a skipped check never leaves start() refusing the next book's
-  // fetch forever.
+  // path, so a discarded check can never leave start() refusing the next
+  // book's fetch forever.
   void finishSilently() {
     {
       Lock lock(mutex_);
@@ -116,6 +134,8 @@ class Checker {
       hash = requestedHash_;
     }
 
+    if (aborted()) return finishSilently();
+
     // Checked before the radio goes up, not just inside the client: a
     // handshake that is going to be refused for memory should not cost the
     // battery a Wi-Fi association first.
@@ -124,6 +144,8 @@ class Checker {
               (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
       return finishSilently();
     }
+
+    if (aborted()) return finishSilently();
 
     // Only an attempt this worker actually makes touches the shared back-off
     // counter, same rule HomeActivity's bring-up follows: WiFi that is
@@ -158,12 +180,17 @@ class Checker {
 
     if (!wifiConnected) {
       LOG_DBG("RPC", "No Wi-Fi for remote progress check; staying silent");
-      if (broughtWifiUp) {
+      // Nothing at all once aborted: the radio belongs to whoever asked for
+      // the abort, and the back-off write would put an SD write in front of
+      // a power-off that is already under way.
+      if (broughtWifiUp && !aborted()) {
         tearDownWifi();
         saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, /*reached=*/false));
       }
       return finishSilently();
     }
+
+    if (aborted()) return finishSilently();
 
     KOReaderProgress fetched;
     bool have = false;
@@ -175,7 +202,7 @@ class Checker {
       LOG_DBG("RPC", "Remote progress check: %s", KOReaderSyncClient::errorString(result));
     }
 
-    if (broughtWifiUp) {
+    if (broughtWifiUp && !aborted()) {
       tearDownWifi();
       // NETWORK_ERROR alone means the access point associated but nothing
       // behind it answered; any other error still proves a real response came
@@ -187,9 +214,13 @@ class Checker {
     {
       Lock lock(mutex_);
       taskHandle_ = nullptr;
-      progress_ = std::move(fetched);
-      haveProgress_ = have;
-      ready_ = true;
+      // The book closed while this was in flight: publishing now would let the
+      // next book inherit this answer if its hash happened to match.
+      if (!aborted_) {
+        progress_ = std::move(fetched);
+        haveProgress_ = have;
+        ready_ = true;
+      }
     }
     logStackHighWater();
     vTaskDelete(nullptr);
@@ -218,6 +249,9 @@ class Checker {
   KOReaderProgress progress_;
   bool haveProgress_ = false;
   bool ready_ = false;
+  // Set by discard() when the reader closes; read by the worker at every
+  // stage boundary. Guarded by mutex_ like every other field here.
+  bool aborted_ = false;
 };
 
 Checker& checker() {
