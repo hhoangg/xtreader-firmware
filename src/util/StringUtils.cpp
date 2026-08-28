@@ -124,4 +124,30 @@ void appendJsonEscaped(std::string& out, const char* data, size_t len) {
   out += '"';
 }
 
+std::string formatUtcDate(const int64_t epochSeconds, const int32_t utcOffsetSeconds) {
+  const int64_t local = epochSeconds + utcOffsetSeconds;
+  // Floor division: C++'s / truncates toward zero, which would put every
+  // instant before 1970 on the wrong day.
+  int64_t days = local / 86400;
+  if (local % 86400 < 0) days--;
+
+  // Howard Hinnant's civil_from_days: shift the era so the leap-day
+  // irregularity lands at the end of the cycle, then walk down era ->
+  // year-of-era -> day-of-year -> month. No <ctime>, no timezone database,
+  // no allocation.
+  days += 719468;  // shift epoch from 1970-01-01 to 0000-03-01
+  const int64_t era = (days >= 0 ? days : days - 146096) / 146097;
+  const int64_t dayOfEra = days - era * 146097;                                                         // [0, 146096]
+  const int64_t yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365;  // [0, 399]
+  const int64_t dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);             // [0, 365]
+  const int64_t mp = (5 * dayOfYear + 2) / 153;            // [0, 11], March-based
+  const int64_t day = dayOfYear - (153 * mp + 2) / 5 + 1;  // [1, 31]
+  const int64_t month = mp < 10 ? mp + 3 : mp - 9;         // [1, 12]
+  const int64_t year = yearOfEra + era * 400 + (month <= 2 ? 1 : 0);
+
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%04lld-%02lld-%02lld", (long long)year, (long long)month, (long long)day);
+  return std::string(buf);
+}
+
 }  // namespace StringUtils

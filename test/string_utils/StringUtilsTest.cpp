@@ -116,3 +116,29 @@ TEST(AppendJsonEscaped, PassesMultiByteUtf8ThroughRawInsteadOfPerByteEscaping) {
 }
 
 TEST(AppendJsonEscaped, EmptyInputProducesEmptyQuotedString) { EXPECT_EQ(jsonEscape(""), "\"\""); }
+
+TEST(FormatUtcDate, EpochZeroIsTheUnixEpochDay) { EXPECT_EQ(StringUtils::formatUtcDate(0, 0), "1970-01-01"); }
+
+TEST(FormatUtcDate, RendersALeapDay) {
+  // 1709164800 == 2024-02-29T00:00:00Z
+  EXPECT_EQ(StringUtils::formatUtcDate(1709164800, 0), "2024-02-29");
+}
+
+TEST(FormatUtcDate, RendersAnOrdinaryDay) {
+  // 1756339200 == 2025-08-28T00:00:00Z
+  EXPECT_EQ(StringUtils::formatUtcDate(1756339200, 0), "2025-08-28");
+}
+
+TEST(FormatUtcDate, PositiveOffsetCanRollForwardIntoTheNextYear) {
+  // 1704063600 == 2023-12-31T23:00:00Z; +7h lands on New Year's Day.
+  EXPECT_EQ(StringUtils::formatUtcDate(1704063600, 7 * 3600), "2024-01-01");
+}
+
+TEST(FormatUtcDate, NegativeOffsetCanRollBackADay) {
+  // Midnight UTC on the leap day, minus one hour, is the day before.
+  EXPECT_EQ(StringUtils::formatUtcDate(1709164800, -3600), "2024-02-28");
+}
+
+TEST(FormatUtcDate, OffsetWithinTheSameDayDoesNotMoveIt) {
+  EXPECT_EQ(StringUtils::formatUtcDate(1709164800, 7 * 3600), "2024-02-29");
+}

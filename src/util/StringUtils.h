@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cctype>
+#include <cstdint>
 #include <string>
 
 namespace StringUtils {
@@ -70,5 +71,22 @@ std::string middleEllipsis(const std::string& value, size_t maxChars);
  * embeds book paths via plain %s.
  */
 void appendJsonEscaped(std::string& out, const char* data, size_t len);
+
+/**
+ * Renders a unix epoch as an ISO calendar date, "YYYY-MM-DD".
+ *
+ * This device has no clock (no RTC on most boards, and sleep is a full chip
+ * reset that would lose one anyway), so it can never say what day it is --
+ * but a timestamp that arrived from the server is a fact in itself, and
+ * showing "the other device was here on 2026-08-24" needs no local clock at
+ * all. Numeric on purpose: month names would need twelve new translations
+ * for one line of prose.
+ *
+ * `utcOffsetSeconds` shifts the instant before the date is taken, so the day
+ * boundary matches the reader's own. Callers pass
+ * (SETTINGS.clockUtcOffsetQ - 48) * 900 -- the biased quarter-hour offset
+ * HalClock::formatTime already takes.
+ */
+std::string formatUtcDate(int64_t epochSeconds, int32_t utcOffsetSeconds);
 
 }  // namespace StringUtils
