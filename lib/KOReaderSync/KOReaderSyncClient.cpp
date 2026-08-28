@@ -213,11 +213,16 @@ KOReaderSyncClient::Error KOReaderSyncClient::updateProgress(const KOReaderProgr
   // which makes "did this row come from me?" unanswerable -- the question
   // RemoteProgressPolicy has to answer before it interrupts anyone. A paired
   // device fills progress.deviceId with the per-device id the sync server
-  // issued it (SyncCredentialStore); the constant remains the fallback for an
-  // unpaired or third-party-KOSync caller, and is also what every row written
-  // before this change carries, which is why the policy still reads it as
-  // self.
-  doc["device_id"] = progress.deviceId.empty() ? DEVICE_ID : progress.deviceId;
+  // issued it (SyncCredentialStore); the constant remains the fallback, and
+  // is also what every row written before this change carries, which is why
+  // the policy still reads it as self.
+  //
+  // Gated on the server being ours for the same reason the position object
+  // below is: the per-device id is an xtreader-issued identifier, and a
+  // device paired to xtreader.com may still be syncing progress to a
+  // third-party KOSync, which has no business receiving it.
+  const bool sendOwnDeviceId = !progress.deviceId.empty() && KOREADER_STORE.effectiveUsesCrossPointSyncServer();
+  doc["device_id"] = sendOwnDeviceId ? progress.deviceId : std::string(DEVICE_ID);
   if (progress.position.has_value() && KOREADER_STORE.effectiveUsesCrossPointSyncServer()) {
     // CrossPoint-specific extension: do not send it to third-party KOSync servers.
     const auto& p = *progress.position;

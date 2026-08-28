@@ -12,6 +12,7 @@
 #include <esp_system.h>
 
 #include <algorithm>
+#include <cstring>
 #include <functional>
 #include <iterator>
 #include <limits>
@@ -704,6 +705,15 @@ void EpubReaderActivity::applyProgressChange(const ProgressChangeResult& sync) {
 void EpubReaderActivity::pollRemoteProgress() {
   if (remoteProgressPromptDone || remoteProgressDocumentHash.empty() || !epub) return;
 
+  // Wait for a section with a page count before consuming anything. Without
+  // one there is no chapter progress to compare against, and treating that as
+  // 0 would place a reader deep in a long chapter at its first page -- easily
+  // more than the policy's 1% threshold away from a remote position that is
+  // in fact the same place. Deliberately before consume(): the result stays
+  // pending and is picked up on a later tick, and remoteProgressPromptDone
+  // stays false so the prompt is not lost.
+  if (!section || section->estimatedTotalPages() == 0) return;
+
   KOReaderProgress remote;
   bool haveRemote = false;
   if (!remote_progress::consume(remoteProgressDocumentHash, remote, haveRemote)) return;
@@ -712,9 +722,7 @@ void EpubReaderActivity::pollRemoteProgress() {
   remoteProgressPromptDone = true;
 
   const float chapterProgress =
-      section && section->estimatedTotalPages() > 0
-          ? static_cast<float>(section->currentPage) / static_cast<float>(section->estimatedTotalPages())
-          : 0.0f;
+      static_cast<float>(section->currentPage) / static_cast<float>(section->estimatedTotalPages());
   const float localPercentage = epub->calculateProgress(currentSpineIndex, chapterProgress);
 
   remote_progress_policy::Input decision;
@@ -730,8 +738,12 @@ void EpubReaderActivity::pollRemoteProgress() {
   // The device has no clock, but the server stamped this instant, so the date
   // is a fact that travelled with the row. SETTINGS.clockUtcOffsetQ is the
   // biased quarter-hour offset HalClock::formatTime already uses (48 = UTC).
+  // A server that omits the timestamp leaves 0, which would render as
+  // "1970-01-01" -- show no date rather than a wrong one.
   const std::string when =
-      StringUtils::formatUtcDate(remote.timestamp, (static_cast<int32_t>(SETTINGS.clockUtcOffsetQ) - 48) * 900);
+      remote.timestamp > 0
+          ? StringUtils::formatUtcDate(remote.timestamp, (static_cast<int32_t>(SETTINGS.clockUtcOffsetQ) - 48) * 900)
+          : std::string();
   const std::string deviceName = remote.device.empty() ? std::string("?") : remote.device;
 
   char detail[160];
@@ -740,6 +752,12 @@ void EpubReaderActivity::pollRemoteProgress() {
            : remotePercent > 100 ? 100
                                  : remotePercent,
            when.c_str());
+  // The date is the last field of the format string in every translation, so
+  // dropping it leaves a dangling separator behind the percentage.
+  size_t detailLen = strlen(detail);
+  while (detailLen > 0 && (detail[detailLen - 1] == ' ' || detail[detailLen - 1] == '-')) {
+    detail[--detailLen] = '\0';
+  }
 
   const StrId options[] = {StrId::STR_SYNC_KEEP_LOCAL_POSITION, StrId::STR_SYNC_GO_TO_REMOTE_POSITION};
   startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput,
@@ -764,7 +782,7 @@ void EpubReaderActivity::pollRemoteProgress() {
 void EpubReaderActivity::jumpToRemotePosition(const KOReaderProgress& remote) {
   if (!epub) return;
 
-  {
+  if (renderer.hasFrameBuffer()) {
     RenderLock lock(*this);
     GUI.drawPopup(renderer, tr(STR_INDEXING));
   }
