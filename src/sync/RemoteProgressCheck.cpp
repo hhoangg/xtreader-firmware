@@ -57,6 +57,16 @@ class Checker {
     return true;
   }
 
+  // Latched by main.cpp's enterDeepSleep() before it tears the reader down,
+  // so the abort that follows can tell a power-off from an ordinary book
+  // close. Never cleared, for the same reason main.cpp's own
+  // deepSleepInProgress never is: startDeepSleep() does not return, so the
+  // latch only ends at the wakeup reset.
+  void setSleepPending() {
+    Lock lock(mutex_);
+    sleepPending_ = true;
+  }
+
   void discard() {
     Lock lock(mutex_);
     // Not a stop-and-join: waiting for the worker here would block the loop
@@ -67,9 +77,9 @@ class Checker {
     // hit its own AUTO_SYNC_TIMEOUT_MS deadline. What the flag does buy is
     // that the worker will not *start* a Wi-Fi search or a request after
     // this, so it cannot fight the before-sleep push for the radio for more
-    // than that one already-bounded stage. On abort the worker also leaves
-    // the radio alone rather than tearing it down, because whoever is
-    // shutting this check down is very likely the one that wants it up.
+    // than that one already-bounded stage. The worker still releases the
+    // radio on its way out unless a power-off is under way -- see
+    // releaseRadio().
     aborted_ = true;
     ready_ = false;
     haveProgress_ = false;
@@ -88,6 +98,11 @@ class Checker {
   bool aborted() {
     Lock lock(mutex_);
     return aborted_;
+  }
+
+  bool sleepPending() {
+    Lock lock(mutex_);
+    return sleepPending_;
   }
 
   // Publishes nothing and releases the task slot. Used by every bail-out
@@ -127,6 +142,19 @@ class Checker {
     LOG_DBG("RPC", "Radio released after remote progress check");
   }
 
+  // Every exit that got as far as the bring-up goes through here. The one
+  // case that keeps the radio up is a power-off: main.cpp's enterDeepSleep()
+  // turns WiFi off itself moments later, and dropping it here would make the
+  // before-sleep progress push in between pay another WIFI_CONNECT_TIMEOUT_MS
+  // search. An ordinary book close has nothing behind it that turns the radio
+  // off, so it must release here or the mode stays non-NULL and
+  // HalPowerManager::setPowerSaving() refuses to drop the C3 to
+  // LOW_POWER_FREQ for the rest of the reading session.
+  void releaseRadio(bool broughtWifiUp) {
+    if (!broughtWifiUp || sleepPending()) return;
+    tearDownWifi();
+  }
+
   void run() {
     std::string hash;
     {
@@ -162,6 +190,10 @@ class Checker {
         // lib/SyncManifest/SleepWifiBackoffPolicy.h.
         LOG_DBG("RPC", "Skipping remote progress check: backed off (%u skip(s) left after %u failure(s))",
                 backoffState.skipsRemaining, backoffState.consecutiveFailures);
+        // A previous check that was aborted mid-search can leave WIFI_STA set
+        // with nothing associated behind it, which alone blocks power saving.
+        // Safe to clear here: broughtWifiUp means nothing is connected.
+        releaseRadio(broughtWifiUp);
         saveBackoffState(sleep_wifi_backoff::afterSkippedAttempt(backoffState));
         return finishSilently();
       }
@@ -180,17 +212,19 @@ class Checker {
 
     if (!wifiConnected) {
       LOG_DBG("RPC", "No Wi-Fi for remote progress check; staying silent");
-      // Nothing at all once aborted: the radio belongs to whoever asked for
-      // the abort, and the back-off write would put an SD write in front of
-      // a power-off that is already under way.
+      releaseRadio(broughtWifiUp);
+      // No back-off write once aborted: it would put an SD write in front of
+      // the close or the power-off that is already under way.
       if (broughtWifiUp && !aborted()) {
-        tearDownWifi();
         saveBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, /*reached=*/false));
       }
       return finishSilently();
     }
 
-    if (aborted()) return finishSilently();
+    if (aborted()) {
+      releaseRadio(broughtWifiUp);
+      return finishSilently();
+    }
 
     KOReaderProgress fetched;
     bool have = false;
@@ -202,8 +236,8 @@ class Checker {
       LOG_DBG("RPC", "Remote progress check: %s", KOReaderSyncClient::errorString(result));
     }
 
+    releaseRadio(broughtWifiUp);
     if (broughtWifiUp && !aborted()) {
-      tearDownWifi();
       // NETWORK_ERROR alone means the access point associated but nothing
       // behind it answered; any other error still proves a real response came
       // back. Same reading SleepProgressSync applies to its own upload.
@@ -252,6 +286,8 @@ class Checker {
   // Set by discard() when the reader closes; read by the worker at every
   // stage boundary. Guarded by mutex_ like every other field here.
   bool aborted_ = false;
+  // Set only by setSleepPending(); read by releaseRadio().
+  bool sleepPending_ = false;
 };
 
 Checker& checker() {
@@ -268,5 +304,7 @@ bool consume(const std::string& documentHash, KOReaderProgress& outProgress, boo
 }
 
 void discard() { checker().discard(); }
+
+void setSleepPending() { checker().setSleepPending(); }
 
 }  // namespace remote_progress

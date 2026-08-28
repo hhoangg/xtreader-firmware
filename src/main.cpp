@@ -49,6 +49,7 @@
 #include "sync/BookDownloader.h"
 #include "sync/BookServerDelete.h"
 #include "sync/DownloadQueue.h"
+#include "sync/RemoteProgressCheck.h"
 #include "sync/SleepProgressSync.h"
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
@@ -307,6 +308,12 @@ void enterDeepSleep(bool fromTimeout = false) {
   // Commit to sleeping before goToSleep() runs the outgoing activity's onExit():
   // a WiFi activity would otherwise silentRestart() here and reboot instead.
   deepSleepInProgress = true;
+  // goToSleep() destroys the reader, whose destructor aborts any in-flight
+  // remote progress check. Tell that check a power-off is the reason, so it
+  // leaves the radio up for trySyncBeforeSleep() below and the unconditional
+  // teardown after it, instead of releasing it the way an ordinary book close
+  // has to. See src/sync/RemoteProgressCheck.h.
+  remote_progress::setSleepPending();
   // Paints the sleep screen right now -- the device looks off from this
   // point on, before anything below spends any time on Wi-Fi.
   activityManager.goToSleep(fromTimeout);

@@ -46,7 +46,16 @@ void start(const std::string& documentHash);
 bool consume(const std::string& documentHash, KOReaderProgress& outProgress, bool& outHaveProgress);
 
 // Forgets any pending result. Called when the reader closes, so the next book
-// cannot inherit the previous one's answer.
+// cannot inherit the previous one's answer. A check still in flight stops at
+// its next stage boundary and releases the radio if it was the one that
+// raised it -- unless setSleepPending() was latched first.
 void discard();
+
+// Latched by main.cpp's enterDeepSleep() before it tears the reader down.
+// Tells the discard() that follows to leave the radio alone: the sleep path
+// turns WiFi off itself a moment later, after a before-sleep progress push
+// that would otherwise pay a second Wi-Fi search. Never cleared -- deep sleep
+// does not return.
+void setSleepPending();
 
 }  // namespace remote_progress
