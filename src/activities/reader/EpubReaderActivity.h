@@ -95,6 +95,13 @@ class EpubReaderActivity final : public ReaderActivity {
   void showBuildPopup(GfxRenderer& renderer, int& pagesUntilFullRefresh);
   bool applyDeferredReposition();
   void clearDeferredReposition();
+  // Lands the reader on a position that came from somewhere other than a page
+  // turn: a bookmark, the percent picker, or the sync server's answer for
+  // this book. Extracted from onReaderMenuConfirm's result lambda when the
+  // remote check gained a second caller for it; the resolution order
+  // (exact content offset first, then xpath/percentage re-derivation) is
+  // unchanged.
+  void applyProgressChange(const ProgressChangeResult& sync);
   void rememberCurrentContentOffset();
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
   void jumpToPercent(int percent);
