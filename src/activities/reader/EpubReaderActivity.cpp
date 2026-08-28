@@ -34,13 +34,17 @@
 #include "ReaderActivity.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "RemoteProgressPolicy.h"
 #include "SdCardFontSystem.h"
 #include "SyncCredentialStore.h"
 #include "activities/settings/TextSettingsActivity.h"
+#include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "fontIds.h"
+#include "sync/RemoteProgressCheck.h"
 #include "util/BookmarkUtil.h"
 #include "util/ScreenshotUtil.h"
+#include "util/StringUtils.h"
 
 namespace {
 constexpr int PAGE_TURN_RATES[] = {1, 1, 3, 6, 12};
@@ -140,6 +144,9 @@ void moveFinishedBookToReadFolder(const std::string& srcPath, const std::string&
 }  // namespace
 
 EpubReaderActivity::~EpubReaderActivity() {
+  // A result that lands after the book is closed belongs to nobody.
+  remote_progress::discard();
+
   ImageBlock::setExtractor(nullptr, nullptr);
 
   if (footnoteDepth > 0 && epub) {
@@ -231,6 +238,26 @@ bool EpubReaderActivity::loadBook() {
   syncBaselineSpineIndex = currentSpineIndex;
   syncBaselinePage = nextPageNumber;
 
+  // The cache directory is named epub_<partial-content-MD5>, and
+  // KOReaderDocumentId::calculate computes that same hash from the same
+  // function (lib/FsHelpers/PartialContentHash.h), so the suffix already IS
+  // the KOSync document id -- reusing it avoids a second 12 KB read of the
+  // book. A suffix that is not 32 hex characters means the hash failed and
+  // resolveBookCacheDir fell back to the legacy path hash, which no server
+  // has ever seen; skip the check entirely rather than ask about a document
+  // id that cannot match.
+  const std::string cachePath = epub->getCachePath();
+  const auto underscore = cachePath.rfind('_');
+  if (underscore != std::string::npos) {
+    const std::string suffix = cachePath.substr(underscore + 1);
+    const bool looksLikeContentHash =
+        suffix.size() == 32 && suffix.find_first_not_of("0123456789abcdef") == std::string::npos;
+    if (looksLikeContentHash && KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::BINARY) {
+      remoteProgressDocumentHash = suffix;
+      remote_progress::start(remoteProgressDocumentHash);
+    }
+  }
+
   return true;
 }
 
@@ -296,6 +323,8 @@ void EpubReaderActivity::loop() {
     finish();
     return;
   }
+
+  pollRemoteProgress();
 
   constexpr unsigned long IDLE_PREWARM_DEBOUNCE_MS = 400;
   if (section && !section->isBuilding() && !RenderLock::peek() && renderer.hasFrameBuffer() &&
@@ -659,6 +688,101 @@ void EpubReaderActivity::applyProgressChange(const ProgressChangeResult& sync) {
     nextPageNumber = targetPage;
   }
   requestUpdate();
+}
+
+void EpubReaderActivity::pollRemoteProgress() {
+  if (remoteProgressPromptDone || remoteProgressDocumentHash.empty() || !epub) return;
+
+  KOReaderProgress remote;
+  bool haveRemote = false;
+  if (!remote_progress::consume(remoteProgressDocumentHash, remote, haveRemote)) return;
+
+  // Whatever happens below, this fetch is spent: one answer, one decision.
+  remoteProgressPromptDone = true;
+
+  const float chapterProgress =
+      section && section->estimatedTotalPages() > 0
+          ? static_cast<float>(section->currentPage) / static_cast<float>(section->estimatedTotalPages())
+          : 0.0f;
+  const float localPercentage = epub->calculateProgress(currentSpineIndex, chapterProgress);
+
+  remote_progress_policy::Input decision;
+  decision.haveRemote = haveRemote;
+  decision.remotePercentage = remote.percentage;
+  decision.remoteDeviceId = remote.deviceId;
+  decision.selfDeviceId = SYNC_STORE.getDeviceId();
+  decision.localPercentage = localPercentage;
+
+  if (remote_progress_policy::decide(decision) != remote_progress_policy::Decision::Prompt) return;
+
+  const int remotePercent = static_cast<int>(remote.percentage * 100.0f + 0.5f);
+  // The device has no clock, but the server stamped this instant, so the date
+  // is a fact that travelled with the row. SETTINGS.clockUtcOffsetQ is the
+  // biased quarter-hour offset HalClock::formatTime already uses (48 = UTC).
+  const std::string when =
+      StringUtils::formatUtcDate(remote.timestamp, (static_cast<int32_t>(SETTINGS.clockUtcOffsetQ) - 48) * 900);
+  const std::string deviceName = remote.device.empty() ? std::string("?") : remote.device;
+
+  char detail[160];
+  snprintf(detail, sizeof(detail), tr(STR_SYNC_REMOTE_POSITION_DETAIL), deviceName.c_str(),
+           remotePercent < 0     ? 0
+           : remotePercent > 100 ? 100
+                                 : remotePercent,
+           when.c_str());
+
+  const StrId options[] = {StrId::STR_SYNC_KEEP_LOCAL_POSITION, StrId::STR_SYNC_GO_TO_REMOTE_POSITION};
+  startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput,
+                                                                tr(STR_SYNC_REMOTE_POSITION_FOUND), detail, options, 2),
+                         [this, remote](const ActivityResult& result) {
+                           // Index 0 is Cancel by OptionPopup's convention --
+                           // "Stay here" does nothing at all: no write, no
+                           // upload, no second prompt.
+                           if (result.isCancelled) return;
+                           const auto& choice = std::get<ConfirmationResult>(result.data);
+                           if (choice.selectedIndex != 1) return;
+                           jumpToRemotePosition(remote);
+                         });
+}
+
+// Turns the server's answer into a local position and lands on it. A
+// CrossPoint peer sends the rich `position` object, which ProgressMapper can
+// resolve directly; a stock KOReader client (a Kindle, say) sends only an
+// xpath and a percentage, and resolving that streams and decompresses the
+// whole chapter -- seconds of work on this task, hence the same indexing
+// popup the percent picker already shows.
+void EpubReaderActivity::jumpToRemotePosition(const KOReaderProgress& remote) {
+  if (!epub) return;
+
+  {
+    RenderLock lock(*this);
+    GUI.drawPopup(renderer, tr(STR_INDEXING));
+  }
+
+  ProgressChangeResult target;
+  target.percentage = remote.percentage;
+  target.xpath = remote.progress;
+  target.hasSavedProgress = true;
+
+  if (remote.position.has_value()) {
+    const auto mapped = ProgressMapper::fromRichPosition(epub, *remote.position, renderer, /*xpathAlreadyTried=*/false);
+    if (mapped.has_value()) {
+      target.spineIndex = mapped->spineIndex;
+      target.page = mapped->pageNumber;
+      target.totalPages = mapped->totalPages;
+      target.hasVisibleTextOffset = mapped->hasVisibleTextOffset;
+      target.visibleTextOffset = mapped->visibleTextOffset;
+      applyProgressChange(target);
+      return;
+    }
+  }
+
+  // No rich position, or it could not be resolved: fall through to the
+  // xpath/percentage path applyProgressChange already implements, which ends
+  // in ProgressMapper::toCrossPoint and its percentage fallback.
+  target.spineIndex = currentSpineIndex;
+  target.page = 0;
+  target.totalPages = 0;
+  applyProgressChange(target);
 }
 
 void EpubReaderActivity::onReaderMenuConfirm(EpubReaderMenuActivity::MenuAction action) {

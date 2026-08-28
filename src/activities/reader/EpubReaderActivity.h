@@ -7,6 +7,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "BookmarkEntry.h"
@@ -49,6 +50,14 @@ class EpubReaderActivity final : public ReaderActivity {
   bool recentsEntryRemoved = false;
   unsigned long bookmarkMessageTime = 0UL;
   bool pendingReadFolderMove = false;
+
+  // KOSync document id for the open book, computed once in loadBook() and
+  // reused to match the background check's answer against the book that is
+  // actually on screen. Empty when the check was never started.
+  std::string remoteProgressDocumentHash;
+  // One prompt per book open, whatever the reader answers. A second dialog
+  // for the same fetch would be nagging, and there is only ever one fetch.
+  bool remoteProgressPromptDone = false;
 
   // Footnote support
   std::vector<FootnoteEntry> currentPageFootnotes;
@@ -102,6 +111,11 @@ class EpubReaderActivity final : public ReaderActivity {
   // (exact content offset first, then xpath/percentage re-derivation) is
   // unchanged.
   void applyProgressChange(const ProgressChangeResult& sync);
+  // Polls the background remote-progress check and, if the answer is worth
+  // it, asks the reader whether to jump there. Called once per loop tick.
+  void pollRemoteProgress();
+  // Resolves the server's answer into a local position and lands on it.
+  void jumpToRemotePosition(const KOReaderProgress& remote);
   void rememberCurrentContentOffset();
   bool saveProgress(int spineIndex, int currentPage, int pageCount);
   void jumpToPercent(int percent);
