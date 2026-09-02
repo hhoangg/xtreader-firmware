@@ -2,9 +2,11 @@
 
 #include <GfxRenderer.h>
 #include <HalStorage.h>
+#include <HomeBookSlots.h>
 #include <I18n.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <memory>
 
 #include "MappedInputManager.h"
@@ -12,19 +14,94 @@
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
 #include "components/UiAppHelpers.h"
+#include "sync/DownloadQueue.h"
 
 namespace fui = freeink::ui;
 
 namespace {
 // Hold threshold for the long-press "remove from list" action (firmware convention).
 constexpr unsigned long LONG_PRESS_MS = 1000;
+
+// Same formatting HomeActivity.cpp's formatByteSize() uses for a remote
+// row's size suffix; not shared because that one is file-local to
+// HomeActivity.cpp.
+void formatByteSize(const uint64_t bytes, char* out, const size_t outSize) {
+  if (bytes >= 1024 * 1024) {
+    snprintf(out, outSize, "%.1f MB", static_cast<double>(bytes) / (1024.0 * 1024.0));
+  } else {
+    snprintf(out, outSize, "%.0f KB", static_cast<double>(bytes) / 1024.0);
+  }
+}
+
+// A remote row's status text, in the same Home-screen wording Home's own
+// rows use (see HomeActivity.cpp's formatSlotStatus, and the STR_HOME_ON_SERVER
+// family of keys it draws on) -- this screen shows the same recency list, so
+// it must not invent a second vocabulary for the same states. OnServer,
+// JustDownloaded and Read all fall to the same default: remoteState() (called
+// below) only ever returns the first of the three for a remote entry, but the
+// switch stays exhaustive rather than assuming that.
+void formatRemoteStatus(const RecentBook& book, const home_book_slots::QueueView& queue, char* out,
+                        const size_t outSize) {
+  int queuePosition = 0;
+  const home_book_slots::State state = home_book_slots::remoteState(book.remoteId, queue, queuePosition);
+  switch (state) {
+    case home_book_slots::State::Queued:
+      if (queuePosition > 0) {
+        snprintf(out, outSize, tr(STR_HOME_QUEUE_POSITION), queuePosition);
+      } else {
+        snprintf(out, outSize, "%s", tr(STR_HOME_QUEUED));
+      }
+      break;
+    case home_book_slots::State::Downloading:
+      snprintf(out, outSize, "%s", tr(STR_HOME_DOWNLOADING_SHORT));
+      break;
+    case home_book_slots::State::Failed:
+      snprintf(out, outSize, "%s", tr(STR_HOME_DOWNLOAD_FAILED));
+      break;
+    case home_book_slots::State::OnServer:
+    case home_book_slots::State::JustDownloaded:
+    case home_book_slots::State::Read:
+    default: {
+      char size[16];
+      formatByteSize(book.sizeBytes, size, sizeof(size));
+      snprintf(out, outSize, "%s - %s", tr(STR_HOME_ON_SERVER), size);
+      break;
+    }
+  }
+}
 }  // namespace
 
 RecentBooksActivity::RecentBooksActivity(GfxRenderer& renderer, MappedInputManager& mappedInput)
     : UiListActivity("RecentBooks", renderer, mappedInput, /*wantsTouchLongPress=*/true) {}
 
+home_book_slots::QueueView RecentBooksActivity::buildQueueView() const {
+  // Same download_queue::Snapshot -> home_book_slots::QueueView reshape
+  // HomeActivity::rebuildSlots() does: one snapshot, not one call per row.
+  const download_queue::Snapshot queueSnap = download_queue::snapshot();
+  home_book_slots::QueueView queue;
+  queue.entries.reserve(queueSnap.count);
+  for (size_t i = 0; i < queueSnap.count; i++) {
+    const auto state = queueSnap.items[i].status == download_queue::ItemStatus::Downloading
+                           ? home_book_slots::State::Downloading
+                           : home_book_slots::State::Queued;
+    queue.entries.push_back({queueSnap.items[i].id, state, static_cast<int>(i) + 1});
+  }
+  if (queueSnap.lastResult.hasResult && !queueSnap.lastResult.ok) {
+    queue.lastFailedId = queueSnap.lastResult.id;
+  }
+  return queue;
+}
+
 void RecentBooksActivity::loadRecentBooks() {
   recentBooks = RECENT_BOOKS.getBooks();
+  // A remote entry carries no title/author of its own -- see
+  // RecentBooksStore::addRemoteBook() -- so it is derived from its path the
+  // same way Home's rows derive it (HomeBookSlots.h rule 4).
+  for (RecentBook& book : recentBooks) {
+    if (book.remoteId.empty()) continue;
+    book.title = home_book_slots::titleFromPath(book.path);
+    book.author = home_book_slots::authorFromPath(book.path);
+  }
   rebuildRowItems();
 }
 
@@ -34,10 +111,21 @@ void RecentBooksActivity::loadRecentBooks() {
 void RecentBooksActivity::rebuildRowItems() {
   rowItems.clear();
   rowItems.reserve(recentBooks.size());
-  for (const auto& book : recentBooks) {
+  rowValues.assign(recentBooks.size(), std::string());
+  // One snapshot for the whole rebuild, not one per remote row (see
+  // buildQueueView()'s comment).
+  const home_book_slots::QueueView queue = buildQueueView();
+  for (size_t i = 0; i < recentBooks.size(); i++) {
+    const RecentBook& book = recentBooks[i];
     fui::ListItem item;
     item.label = book.title.c_str();
     if (!book.author.empty()) item.subtitle = book.author.c_str();
+    if (!book.remoteId.empty()) {
+      char status[96];
+      formatRemoteStatus(book, queue, status, sizeof(status));
+      rowValues[i] = status;
+      item.value = rowValues[i].c_str();
+    }
     item.icon = listIconFor(UITheme::getFileIcon(book.path), 32);  // subtitle rows carry the larger icon
     item.actionValue = static_cast<int16_t>(rowItems.size());
     rowItems.push_back(item);
@@ -68,17 +156,19 @@ void RecentBooksActivity::onEnter() {
 
   // Prune entries whose backing files are gone; this is one of two interaction
   // points where the persistent store gets cleaned (the other is addBook).
-  if (RECENT_BOOKS.pruneMissing()) {
-    RECENT_BOOKS.saveToFile();
-  }
+  // It persists itself -- saving from here would serialize the list after the
+  // store's lock had been released.
+  RECENT_BOOKS.pruneMissing();
 
   loadRecentBooks();
 }
 
 void RecentBooksActivity::onExit() {
   Activity::onExit();
-  // rowItems' label/subtitle pointers alias recentBooks' strings; drop both.
+  // rowItems' label/subtitle/value pointers alias recentBooks'/rowValues'
+  // strings; drop all three.
   rowItems.clear();
+  rowValues.clear();
   recentBooks.clear();
 }
 
@@ -86,11 +176,61 @@ void RecentBooksActivity::activateIndex(const int index) {
   // The interaction table can deliver a row index captured before a removal
   // shrank the list; the next render re-registers the rows.
   if (index < 0 || index >= listCount()) return;
+  const RecentBook& book = recentBooks[index];
+  if (!book.remoteId.empty()) {
+    activateRemote(book);
+    return;
+  }
   // Opening the book leaves this screen; a lingering flash would gray an
   // unrelated row when the list next appears.
   app.clearTapFlash();
-  LOG_DBG("RBA", "Selected recent book: %s", recentBooks[index].path.c_str());
-  onSelectBook(recentBooks[index].path);
+  LOG_DBG("RBA", "Selected recent book: %s", book.path.c_str());
+  onSelectBook(book.path);
+}
+
+void RecentBooksActivity::activateRemote(const RecentBook& book) {
+  int queuePosition = 0;
+  const home_book_slots::State state = home_book_slots::remoteState(book.remoteId, buildQueueView(), queuePosition);
+  if (state == home_book_slots::State::Queued || state == home_book_slots::State::Downloading) {
+    // Nothing to do, same as Home's row: only download_queue::cancelAll()
+    // exists, there is no per-row cancel.
+    return;
+  }
+
+  app.clearTapFlash();
+  // No repaint here on success: it happens below, once, after the enqueue
+  // outcome is known -- this screen has no background queue poll to pick it
+  // up later the way Home's pollDownloadQueue() does.
+  const download_queue::EnqueueOutcome outcome = download_queue::enqueue(book.remoteId);
+  if (outcome != download_queue::EnqueueOutcome::Ok) {
+    LOG_DBG("RBA", "Enqueue of %s refused (outcome=%d)", book.remoteId.c_str(), static_cast<int>(outcome));
+    showEnqueueRefused(outcome);
+    return;
+  }
+  loadRecentBooks();
+  requestUpdate(true);
+}
+
+void RecentBooksActivity::showEnqueueRefused(const download_queue::EnqueueOutcome outcome) {
+  if (outcome == download_queue::EnqueueOutcome::AlreadyQueued) return;
+
+  const char* message = nullptr;
+  switch (outcome) {
+    case download_queue::EnqueueOutcome::NotPaired:
+      message = tr(STR_HOME_ENQUEUE_NOT_PAIRED);
+      break;
+    case download_queue::EnqueueOutcome::Full:
+      message = tr(STR_HOME_ENQUEUE_QUEUE_FULL);
+      break;
+    default:
+      message = tr(STR_HOME_ENQUEUE_UNAVAILABLE);
+      break;
+  }
+
+  RenderLock lock(*this);
+  GUI.drawPopup(renderer, message);
+  // Deliberately no requestUpdate(): the next input-driven redraw clears it,
+  // same reasoning as HomeActivity::showEnqueueRefused().
 }
 
 void RecentBooksActivity::onRowLongPress(const int index) {
@@ -120,6 +260,14 @@ bool RecentBooksActivity::handleButtons() {
   return false;
 }
 
+// For a remote entry this only dismisses it from the recency list -- there is
+// nothing else to remove: it is not on this device, RECENT_BOOKS.removeByPath()
+// never touches the server or the download queue, and a download already in
+// flight keeps running (its eventual markDownloaded() becomes a harmless
+// no-op against a path no longer in the list -- RecentBooksStore.h). If the
+// book is still on the server next sync, discovery treats it as new again and
+// re-inserts it, exactly like a local book that is removed here and later
+// reopened.
 void RecentBooksActivity::promptRemoveBook(const std::string& path, const std::string& title) {
   auto handler = [this, path](const ActivityResult& res) {
     if (res.isCancelled) {

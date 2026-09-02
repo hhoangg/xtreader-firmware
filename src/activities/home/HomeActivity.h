@@ -28,7 +28,15 @@ class HomeActivity final : public Activity {
   int coverRectY = 0;
   int coverRectW = 0;
   int coverRectH = 0;
-  std::vector<RecentBook> recentBooks;
+  // The books the cover tile band draws: the leading LOCAL entries of the
+  // recency list, capped at the theme's homeRecentBooksCount. Remote entries
+  // are excluded deliberately -- one has no cover, no title and no author, so
+  // a tile showing one would be a blank box, and Back (which opens
+  // tileBooks[0]) would try to open a file that is not on the card.
+  std::vector<RecentBook> tileBooks;
+  // The one recency list, most recent first, local and remote entries
+  // together -- the only source the rows below the tile are built from.
+  std::vector<RecentBook> recencyList;
   const HomeMenuItem initialMenuItem;
   const bool cleanInitialRefresh;
   // The home_book_slots rows below the cover tile, drawn by drawSlotBand().
@@ -140,22 +148,17 @@ class HomeActivity final : public Activity {
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
-  void loadRecentBooks(int maxBooks);
+  // Refreshes tileBooks and recencyList from RECENT_BOOKS. Assumes the caller
+  // holds RenderLock -- it is only ever reached through rebuildSlots(), which
+  // takes one.
+  void loadRecentBooks();
   void loadRecentCovers(int coverHeight);
-  // Number of leading recentBooks entries that actually occupy a
-  // selector/cover position on screen -- the theme's own
-  // metrics.homeRecentBooksCount (1, or 3 for Lyra3Covers), capped by however
-  // many recents there actually are. Every place that used to read
-  // recentBooks.size() to mean "how many cover tiles are shown" (menu-item
-  // counting, selectorIndex offsets, loadRecentCovers()'s thumbnail loop)
-  // must use this instead now that loadRecentBooks() fetches more recents
-  // than the tile displays, to feed rebuildSlots().
-  int visibleRecentCount() const;
-  // Gathers the three home_book_slots::Input sources -- topUndownloaded()
-  // for remote, recentBooks for local, download_queue::snapshot() for queue
-  // state -- and stores fill()'s result into slots_ under RenderLock (see
-  // AGENTS.md's RenderLock rule; buildScreen() reads slots_ on the render
-  // task).
+  // Re-reads the recency list and stores home_book_slots::fill()'s result into
+  // slots_, all under one RenderLock (see AGENTS.md's RenderLock rule;
+  // render() reads both lists on the render task). Called at exactly the three
+  // moments Home may repaint -- enqueue, download start, download end -- plus
+  // onEnter(); the re-read is what makes a completed download's
+  // markDownloaded() and a sync's discoveries visible here.
   void rebuildSlots();
   // Automatic "check whether there are new files" sync: runs at most once
   // per boot, the first time the library screen is reached, and only if
@@ -167,6 +170,16 @@ class HomeActivity final : public Activity {
   // loading stage, on the same "blocking with a visible popup" pattern
   // loadRecentCovers() itself uses.
   void trySyncLibrary();
+  // Merges what the sync just learned into the one recency list: books the
+  // server has that this device does not are inserted at the front, and
+  // remote entries whose book was deleted server-side are dropped (see
+  // lib/RecentDiscovery, which owns the rule, and
+  // docs/superpowers/specs/2026-09-02-one-recency-list-design.md). Called
+  // only from trySyncLibrary(), only after a successful sync, and
+  // deliberately touches RECENT_BOOKS rather than slots_: it runs on the
+  // render task with the rendering mutex held, so the repaint it needs goes
+  // through slotsRebuildPending like every other post-sync change.
+  void runRecentDiscovery();
   // Delivers CrossPointState::pendingBookFinishedPath, if there is one and
   // conditions allow (see SyncTriggerPolicy.h's
   // shouldDeliverPendingBookFinished()) -- the reporting half of

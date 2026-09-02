@@ -9,6 +9,7 @@
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
+#include <RecentDiscovery.h>
 #include <SyncTriggerPolicy.h>
 #include <Utf8.h>
 #include <WiFi.h>
@@ -86,28 +87,6 @@ uint32_t heartbeatWallpaperRevision = 0;
 // itself after a Wi-Fi bring-up.
 bool librarySyncPopupUsedThisPass = false;
 
-// Books whose download finished during this boot. They are Home's third row
-// source (see HomeBookSlots.h): markDownloaded() drops them from the manifest
-// scan as the transfer ends and they do not reach recents until the reader
-// opens one, so without this list a book would vanish from Home at the moment
-// it stopped being a download. A plain static for the same reason as the
-// latches above: a download runs wherever the reader is except inside a book,
-// so a completion can land while HomeActivity does not exist, and a member
-// would lose it on the next visit. Never written to SD -- sleep is a full
-// chip reset and the board has no clock, so "recently" cannot survive a wake
-// and must not pretend to.
-std::vector<home_book_slots::DownloadedCandidate> justDownloaded;
-// Only ever read back against three rows; the cap keeps a long session from
-// growing the list without bound, dropping the oldest entry first.
-constexpr size_t JUST_DOWNLOADED_MAX = 8;
-
-bool alreadyJustDownloaded(const std::string& path) {
-  for (const home_book_slots::DownloadedCandidate& candidate : justDownloaded) {
-    if (candidate.path == path) return true;
-  }
-  return false;
-}
-
 // Context for the wallpaper sync's progress callback -- plain pointers, not
 // a capturing lambda (see CLAUDE.md's "Template and std::function Bloat").
 struct WallpaperProgressCtx {
@@ -145,6 +124,14 @@ constexpr int SLOT_ART_HEIGHT_NUM = 3;
 constexpr int SLOT_ART_HEIGHT_DEN = 4;
 constexpr int SLOT_ART_ASPECT_NUM = 40;
 constexpr int SLOT_ART_ASPECT_DEN = 54;
+// Selection geometry, mirroring SheetTheme's kCardSelectInset / kCardSelectRadius
+// / kThumbRadius so the row's selected state and the cover tile's read as one
+// widget rather than two. The frame is drawn OUTSIDE the content column, which
+// is what puts clear air between the border and the artwork -- drawing it at
+// the content's own edge makes the two touch.
+constexpr int SLOT_SELECT_OUTSET = 6;
+constexpr uint8_t SLOT_SELECT_RADIUS = 14;
+constexpr uint8_t SLOT_ART_RADIUS = 9;
 
 fui::Rect r16(const int x, const int y, const int w, const int h) {
   return fui::Rect{static_cast<int16_t>(x), static_cast<int16_t>(y), static_cast<int16_t>(w), static_cast<int16_t>(h)};
@@ -190,23 +177,6 @@ void drawNavIcon(const GfxRenderer& renderer, const uint8_t* bitmap, const int x
         renderer.drawPixel(x + (NAV_ICON_SIZE - 1 - row), y + col, ink);
       }
     }
-  }
-}
-
-// Dashes drawn as short filled runs: the renderer has no dashed stroke, and a
-// dashed edge is what separates "the server has this" from "this is yours".
-void drawDashedRect(fui::GfxRendererTarget& target, const fui::Rect rect, const fui::Paint paint, const int thickness,
-                    const int dash) {
-  if (rect.empty() || thickness <= 0 || dash <= 0) return;
-  for (int x = rect.x; x < rect.right(); x += dash * 2) {
-    const int w = std::min(dash, static_cast<int>(rect.right()) - x);
-    target.fill(r16(x, rect.y, w, thickness), paint);
-    target.fill(r16(x, rect.bottom() - thickness, w, thickness), paint);
-  }
-  for (int y = rect.y; y < rect.bottom(); y += dash * 2) {
-    const int h = std::min(dash, static_cast<int>(rect.bottom()) - y);
-    target.fill(r16(rect.x, y, thickness, h), paint);
-    target.fill(r16(rect.right() - thickness, y, thickness, h), paint);
   }
 }
 
@@ -275,19 +245,22 @@ bool drawCoverThumb(const GfxRenderer& renderer, const fui::Rect cell, const std
 // downloaded, so its cell carries the download state as a shape instead.
 void drawSlotArt(const GfxRenderer& renderer, fui::GfxRendererTarget& target, const fui::Rect cell,
                  const home_book_slots::Slot& slot, const fui::ThemeTokens& tokens) {
-  const int dash = std::max<int>(2, tokens.spaceSm);
   const int heavy = std::max<int>(2, tokens.spaceXs);
+  // Mirrors SheetTheme's kThumbRadius, so the placeholder that stands in for a
+  // cover is the same shape as the cover it will become, and as the rounded
+  // selection frame around the row.
+  const uint8_t artRadius = tokens.listRowRadius != 0 ? tokens.listRowRadius : SLOT_ART_RADIUS;
 
   switch (slot.state) {
     case home_book_slots::State::OnServer: {
-      // Two pixels thick, not one: a dither is a checkerboard, so whether a
-      // one-pixel run has any ink at all depends on the parity of its y. A
-      // cell of even height puts the top and bottom edges on opposite
-      // parities and one of them comes out blank -- observed on hardware as a
-      // box missing its bottom edge. The vertical edges survived at one pixel
-      // only because they span many rows and catch the inked ones. Two pixels
-      // covers both parities and cannot drop an edge.
-      drawDashedRect(target, cell, fui::Paint::dither(fui::Color::LightGray), 2, dash);
+      // Dithered rather than dashed. A dash pattern cannot follow a rounded
+      // corner without special-casing the arcs, and the dither already carries
+      // the "lighter than queued" reading on its own. Two pixels thick, not
+      // one: a dither is a checkerboard, so whether a one-pixel run has any ink
+      // depends on the parity of its y, and an even-height cell put the top and
+      // bottom edges on opposite parities -- observed on hardware as a box
+      // missing its bottom edge.
+      target.stroke(cell, fui::Paint::dither(fui::Color::LightGray), 2, artRadius);
       const fui::BitmapRef arrow = fui::bitmapFromIcon(icon_download_24);
       const int glyph = std::min<int>(arrow.width, std::min(cell.width, cell.height));
       target.bitmap(r16(cell.x + (cell.width - glyph) / 2, cell.y + (cell.height - glyph) / 2, glyph, glyph), arrow,
@@ -295,13 +268,13 @@ void drawSlotArt(const GfxRenderer& renderer, fui::GfxRendererTarget& target, co
       break;
     }
     case home_book_slots::State::Queued:
-      drawDashedRect(target, cell, fui::Paint::solid(fui::Color::Black), heavy, dash);
+      target.stroke(cell, fui::Paint::solid(fui::Color::Black), static_cast<uint8_t>(heavy), artRadius);
       break;
     case home_book_slots::State::Downloading:
-      target.fill(cell, fui::Paint::solid(fui::Color::Black));
+      target.fill(cell, fui::Paint::solid(fui::Color::Black), artRadius);
       break;
     case home_book_slots::State::Failed: {
-      target.stroke(cell, fui::Paint::solid(fui::Color::Black), static_cast<uint8_t>(heavy));
+      target.stroke(cell, fui::Paint::solid(fui::Color::Black), static_cast<uint8_t>(heavy), artRadius);
       // A bang, built from two rects rather than typed: it has to read at this
       // size in every font the UI can be running, including the CJK fallback.
       const int barW = heavy;
@@ -315,9 +288,9 @@ void drawSlotArt(const GfxRenderer& renderer, fui::GfxRendererTarget& target, co
     case home_book_slots::State::JustDownloaded:
     case home_book_slots::State::Read:
       if (!drawCoverThumb(renderer, cell, slot.coverBmpPath)) {
-        target.fill(cell, fui::Paint::dither(fui::Color::LightGray));
+        target.fill(cell, fui::Paint::dither(fui::Color::LightGray), artRadius);
       }
-      target.stroke(cell, fui::Paint::solid(fui::Color::Black), 1);
+      target.stroke(cell, fui::Paint::solid(fui::Color::Black), 1, artRadius);
       break;
   }
 }
@@ -330,9 +303,6 @@ void drawSlotRow(const GfxRenderer& renderer, fui::GfxRendererTarget& target, co
     target.fill(r16(row.x + sidePadding, row.y, row.width - sidePadding * 2, 1),
                 fui::Paint::dither(fui::Color::LightGray));
   }
-  if (selected) {
-    target.stroke(row, fui::Paint::solid(fui::Color::Black), static_cast<uint8_t>(std::max<int>(2, tokens.spaceXs)));
-  }
 
   int artH = std::min(row.height * SLOT_ART_HEIGHT_NUM / SLOT_ART_HEIGHT_DEN, row.height - tokens.spaceSm * 2);
   int artW = artH * SLOT_ART_ASPECT_NUM / SLOT_ART_ASPECT_DEN;
@@ -344,6 +314,23 @@ void drawSlotRow(const GfxRenderer& renderer, fui::GfxRendererTarget& target, co
   }
   if (artW <= 0 || artH <= 0) return;
   const fui::Rect art = r16(row.x + sidePadding, row.y + (row.height - artH) / 2, artW, artH);
+
+  if (selected) {
+    // The frame is the art box grown by the same amount on all four sides, then
+    // stretched to the content column's width. Deriving the vertical inset from
+    // a constant instead left the top and bottom noticeably thicker than the
+    // sides, because the art is centred in the row and the row's height varies
+    // by theme. Clamped to the row so a tall text column cannot push it out.
+    // Drawn OUTSIDE the content the way SheetTheme frames the cover tile: at
+    // the content's own edge the border touches the artwork, and at the
+    // screen's edge the panel's painted bezel swallows the left and right
+    // sides so the selection reads as two bare horizontal bars.
+    const int top = std::max<int>(row.y + 1, art.y - SLOT_SELECT_OUTSET);
+    const int bottom = std::min<int>(row.y + row.height - 1, art.y + art.height + SLOT_SELECT_OUTSET);
+    target.stroke(
+        r16(art.x - SLOT_SELECT_OUTSET, top, row.width - sidePadding * 2 + SLOT_SELECT_OUTSET * 2, bottom - top),
+        fui::Paint::solid(fui::Color::Black), 1, tokens.listRowRadius != 0 ? tokens.listRowRadius : SLOT_SELECT_RADIUS);
+  }
   drawSlotArt(renderer, target, art, slot, tokens);
 
   const int textX = art.right() + tokens.spaceMd;
@@ -432,11 +419,6 @@ void drawNavBar(const GfxRenderer& renderer, fui::GfxRendererTarget& target, con
 }
 }  // namespace
 
-int HomeActivity::visibleRecentCount() const {
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  return std::min(static_cast<int>(recentBooks.size()), std::max(1, metrics.homeRecentBooksCount));
-}
-
 int HomeActivity::coverSelectionCount() const {
   const auto& metrics = UITheme::getInstance().getMetrics();
   // 0 on a homeContinueReadingInMenu theme: there, Continue Reading was a
@@ -448,7 +430,7 @@ int HomeActivity::coverSelectionCount() const {
   // already reads "Resume". Every other theme highlights one tile per
   // displayed cover (BaseTheme/Lyra on index 0, Lyra3Covers on index i).
   if (metrics.homeContinueReadingInMenu) return 0;
-  return visibleRecentCount();
+  return static_cast<int>(tileBooks.size());
 }
 
 int HomeActivity::slotRowCount() const {
@@ -540,23 +522,28 @@ void HomeActivity::drawSlotBand(const SlotBandLayout& layout, const int selected
              r16(layout.x, layout.navBarTop, layout.width, layout.navBarHeight), selectedNav);
 }
 
-void HomeActivity::loadRecentBooks(int maxBooks) {
-  recentBooks.clear();
-  const auto& books = RECENT_BOOKS.getBooks();
-  recentBooks.reserve(std::min(static_cast<int>(books.size()), maxBooks));
+void HomeActivity::loadRecentBooks() {
+  const int tileCap = std::max(1, UITheme::getInstance().getMetrics().homeRecentBooksCount);
+
+  recencyList.clear();
+  tileBooks.clear();
+  // A copy of the store's list, not a view into it: the loop below calls
+  // Storage.exists() per entry, and a task that inserts while this yields
+  // would reallocate the vector this is walking.
+  const std::vector<RecentBook> books = RECENT_BOOKS.getBooks();
+  recencyList.reserve(books.size());
+  tileBooks.reserve(static_cast<size_t>(tileCap));
 
   for (const RecentBook& book : books) {
-    // Limit to maximum number of recent books
-    if (recentBooks.size() >= maxBooks) {
-      break;
+    // A remote entry is never missing -- it has no local file yet (see
+    // RecentBooksStore::isMissing).
+    if (RecentBooksStore::isMissing(book)) continue;
+    recencyList.push_back(book);
+    // Only a book that is actually on the card can fill a tile: a remote entry
+    // has no cover and no title to draw one with.
+    if (book.remoteId.empty() && tileBooks.size() < static_cast<size_t>(tileCap)) {
+      tileBooks.push_back(book);
     }
-
-    // Skip if file no longer exists
-    if (RecentBooksStore::isMissing(book)) {
-      continue;
-    }
-
-    recentBooks.push_back(book);
   }
 }
 
@@ -565,13 +552,12 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
   bool showingLoading = false;
   Rect popupRect;
 
-  // Only the covers actually shown in the tile -- recentBooks may hold more
-  // (rebuildSlots() needs the rest, see visibleRecentCount()), and none of
-  // those extra entries have a tile to generate a thumbnail for.
-  const int loadCount = visibleRecentCount();
+  // Only the covers actually shown in the tile. The rest of the recency list
+  // has no tile to generate a thumbnail for.
+  const int loadCount = static_cast<int>(tileBooks.size());
   int progress = 0;
   for (int i = 0; i < loadCount; i++) {
-    RecentBook& book = recentBooks[i];
+    RecentBook& book = tileBooks[i];
     if (!book.coverBmpPath.empty()) {
       std::string coverPath = UITheme::getCoverThumbPath(book.coverBmpPath, coverHeight);
       if (!Storage.exists(coverPath.c_str())) {
@@ -624,8 +610,8 @@ void HomeActivity::loadRecentCovers(int coverHeight) {
 
 void HomeActivity::rebuildSlots() {
   // Held for the whole function, not just the assignment at the end.
-  // recentBooks is read below to build input.recents and input.coverTilePaths,
-  // and loadRecentCovers() writes book.coverBmpPath through a live reference
+  // loadRecentBooks() below rewrites both lists, render() reads both, and
+  // loadRecentCovers() writes tileBooks[i].coverBmpPath through a live reference
   // on the render task -- so without this, a queue transition landing during
   // thumbnail generation is a concurrent read and write of a std::string.
   // Safe from every call site: ActivityManager::loop() calls loop() with the
@@ -635,18 +621,18 @@ void HomeActivity::rebuildSlots() {
   // slotsRebuildPending instead of calling this.
   RenderLock lock(*this);
 
+  // The one source, re-read here rather than at onEnter() alone: a finished
+  // download clears its entry's remoteId in the store (BookDownloader.cpp's
+  // markDownloaded), and a sync's discoveries are inserted there too, so
+  // without this the rows would keep rendering the list as it was when this
+  // activity was created.
+  loadRecentBooks();
+
   home_book_slots::Input input;
-
-  std::vector<ManifestIndexRecord> remoteRecords;
-  sync_manifest::topUndownloaded(home_book_slots::SLOT_COUNT, remoteRecords);
-  input.remote.reserve(remoteRecords.size());
-  for (const ManifestIndexRecord& record : remoteRecords) {
-    input.remote.push_back({record.id, record.path, record.sizeBytes, record.updatedAt});
-  }
-
-  input.recents.reserve(recentBooks.size());
-  for (const RecentBook& book : recentBooks) {
-    input.recents.push_back({book.path, book.title, book.author, book.coverBmpPath, book.progressPercent});
+  input.recents.reserve(recencyList.size());
+  for (const RecentBook& book : recencyList) {
+    input.recents.push_back(
+        {book.path, book.title, book.author, book.coverBmpPath, book.progressPercent, book.remoteId, book.sizeBytes});
   }
 
   // One snapshot, not one call per queue entry below -- see DownloadQueue.h's
@@ -663,23 +649,11 @@ void HomeActivity::rebuildSlots() {
     input.queue.lastFailedId = queueSnap.lastResult.id;
   }
 
-  // One per tile the theme actually draws, not just recentBooks[0]: on
+  // One per tile the theme actually draws, not just tileBooks[0]: on
   // Lyra3Covers the band is three wide, and subtracting only the first left
   // its other two showing again as rows.
-  const int tileCount = visibleRecentCount();
-  input.coverTilePaths.reserve(static_cast<size_t>(tileCount));
-  for (int i = 0; i < tileCount; i++) input.coverTilePaths.push_back(recentBooks[i].path);
-
-  // Retire anything the reader has since opened, so the capped session list
-  // does not silently fill with books that no longer want a badge. fill()
-  // applies the same rule itself; this is what actually frees the entry.
-  for (size_t i = justDownloaded.size(); i > 0; i--) {
-    const std::string& path = justDownloaded[i - 1].path;
-    const bool opened = std::any_of(recentBooks.begin(), recentBooks.end(),
-                                    [&path](const RecentBook& book) { return book.path == path; });
-    if (opened) justDownloaded.erase(justDownloaded.begin() + static_cast<std::ptrdiff_t>(i - 1));
-  }
-  input.justDownloaded = justDownloaded;
+  input.coverTilePaths.reserve(tileBooks.size());
+  for (const RecentBook& book : tileBooks) input.coverTilePaths.push_back(book.path);
 
   slots_ = home_book_slots::fill(input);
 
@@ -692,16 +666,9 @@ void HomeActivity::rebuildSlots() {
 void HomeActivity::onEnter() {
   Activity::onEnter();
 
-  const auto& metrics = UITheme::getInstance().getMetrics();
-  // Fetch enough recents for the cover tile (recentBooks[0]) plus the
-  // home_book_slots row below it (up to SLOT_COUNT more) -- rebuildSlots()
-  // below is what actually consumes the extra entries; the tile itself still
-  // only ever looks at index 0, and visibleRecentCount() keeps every other
-  // consumer of recentBooks.size() bounded to what the tile displays.
-  loadRecentBooks(metrics.homeRecentBooksCount + static_cast<int>(home_book_slots::SLOT_COUNT));
-
-  // Before the selector math below: slotRowCount() reads slots_, and the nav
-  // strip sits after the book rows in the selector's index space.
+  // Reads the recency list and fills both it and slots_. Before the selector
+  // math below: slotRowCount() reads slots_, and the nav strip sits after the
+  // book rows in the selector's index space.
   rebuildSlots();
 
   selectorIndex = initialMenuItem == HomeMenuItem::NONE
@@ -775,26 +742,12 @@ void HomeActivity::pollDownloadQueue() {
 
   // pulse().progress is deliberately not read: it ticks once per HTTP chunk,
   // and a repaint mid-transfer has 5-7 KB of contiguous heap to run in.
-  const bool completed = pulse.completions != lastPulseCompletions;
   lastPulseGeneration = pulse.generation;
   lastPulseCompletions = pulse.completions;
 
-  if (completed) {
-    // Scoped so the snapshot's MAX_QUEUE items are off the stack again before
-    // rebuildSlots() takes one of its own.
-    const download_queue::Snapshot snap = download_queue::snapshot();
-    const std::string& path = snap.lastResult.path;
-    if (snap.lastResult.hasResult && snap.lastResult.ok && !path.empty() && !alreadyJustDownloaded(path)) {
-      if (justDownloaded.size() >= JUST_DOWNLOADED_MAX) justDownloaded.erase(justDownloaded.begin());
-      // sizeBytes 0: LastResult carries the path but not the byte count, and
-      // re-reading the manifest record here would cost an SD scan on the one
-      // pass that has just finished competing with a transfer for heap. The
-      // row omits the size rather than printing a zero -- see
-      // formatSlotStatus().
-      justDownloaded.push_back({path, 0});
-    }
-  }
-
+  // A finished download needs nothing tracked here: BookDownloader has
+  // already cleared the entry's remoteId in the store, keeping its position,
+  // and the re-read inside rebuildSlots() picks that up.
   rebuildSlots();  // takes RenderLock itself, and releases it before the update below
   requestUpdate();
 }
@@ -877,7 +830,7 @@ void HomeActivity::loop() {
 
   auto activateSelection = [this, coverCount, rowCount] {
     if (selectorIndex < coverCount) {
-      onSelectBook(recentBooks[selectorIndex].path);
+      onSelectBook(tileBooks[selectorIndex].path);
       return;
     }
     const int slotIndex = selectorIndex - coverCount;
@@ -903,68 +856,63 @@ void HomeActivity::loop() {
     }
   };
 
-  const auto moveNext = [this, menuCount] {
+  // The cursor is one cycle. The index space runs cover tile -> book rows ->
+  // nav strip and then round to the start, so every move is a modular step
+  // over menuCount -- which is recomputed each pass above, because rows
+  // appear and disappear as the queue moves. Right on the last icon lands on
+  // position 0 (the cover tile, or the first book row on a theme where the
+  // tile is not selectable, see coverSelectionCount()); backwards from
+  // position 0 lands on the last icon.
+  //
+  // `moved` keeps a single press to a single position. NavNext/NavPrevious
+  // fold the front Left/Right pair into the vertical commands (see
+  // MappedInputManager::mapButton), so one physical press can reach two of
+  // the registrations below; the first to act closes the rest for this pass.
+  bool moved = false;
+  const auto moveNext = [this, menuCount, &moved] {
+    if (moved) return;
+    moved = true;
     selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
     requestUpdate();
   };
-  const auto movePrevious = [this, menuCount] {
+  const auto movePrevious = [this, menuCount, &moved] {
+    if (moved) return;
+    moved = true;
     selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
     requestUpdate();
   };
 
   if (navSelectionIndex() >= 0) {
-    // On the strip the front buttons walk it horizontally, so the vertical
-    // move is the side buttons alone: NavNext/NavPrevious fold the front pair
-    // in (see MappedInputManager::mapButton) and one press would otherwise
-    // fire both moves. The hints relabel to match -- see render().
+    // On the strip the front pair drives the same cycle horizontally, so
+    // vertical movement is the side buttons alone -- binding both to
+    // NavNext/NavPrevious here is exactly what would double-step. The hints
+    // relabel to match; see render().
     buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Down}, moveNext);
     buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Up}, movePrevious);
-    // Both recompute navSelectionIndex() rather than capture it: an Up/Down
-    // move above, or the Left move below, may already have stepped the
-    // selector off the strip this same pass, and neither may step it twice.
-    //
-    // Neither wraps. Right stops on the last icon, so the strip reads as a
-    // strip with ends rather than a loop; Left walks off the first icon back
-    // onto the last book row, which is the position immediately before it in
-    // the selector's order and the only way out of the strip that does not
-    // need the side buttons.
-    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, [this] {
-      const int nav = navSelectionIndex();
-      if (nav < 0 || nav >= static_cast<int>(NAV_ITEM_COUNT) - 1) return;
-      selectorIndex++;
-      requestUpdate();
-    });
-    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, [this] {
-      // selectorIndex > 0 rather than nav > 0: stepping back off icon 0 is the
-      // same decrement as stepping between icons, and the guard also covers a
-      // theme with no cover tile and no rows, where icon 0 is position 0 and
-      // there is nowhere to go.
-      if (navSelectionIndex() < 0 || selectorIndex <= 0) return;
-      selectorIndex--;
-      requestUpdate();
-    });
+    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Right}, moveNext);
+    buttonNavigator.onPressAndContinuous({MappedInputManager::Button::Left}, movePrevious);
   } else {
     buttonNavigator.onNext(moveNext);
     buttonNavigator.onPrevious(movePrevious);
   }
 
+  // Through the same two moves as the buttons, so a swipe travels the one
+  // cycle and wraps at both ends exactly as they do.
   const auto swipe = mappedInput.wasSwipe();
   if (swipe == MappedInputManager::SwipeDir::Up) {
-    selectorIndex = ButtonNavigator::nextIndex(selectorIndex, menuCount);
-    requestUpdate();
+    moveNext();
     return;
   }
   if (swipe == MappedInputManager::SwipeDir::Down) {
-    selectorIndex = ButtonNavigator::previousIndex(selectorIndex, menuCount);
-    requestUpdate();
+    movePrevious();
     return;
   }
 
   // Back is otherwise unused on the home menu: open the most recently read
-  // book directly (recentBooks is most-recent-first and already pruned of
-  // files missing from the SD card).
-  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && !recentBooks.empty()) {
-    onSelectBook(recentBooks[0].path);
+  // book directly (tileBooks is most-recent-first, holds only books that are
+  // on the SD card, and is already pruned of files missing from it).
+  if (mappedInput.wasReleased(MappedInputManager::Button::Back) && !tileBooks.empty()) {
+    onSelectBook(tileBooks[0].path);
     return;
   }
 
@@ -976,14 +924,14 @@ void HomeActivity::loop() {
   // highlight to move, so a touch-down has nothing to show and only the tap
   // acts.
   const bool tileSelectable = coverCount > 0;
-  const int coverCellCount = tileSelectable ? coverCount : (recentBooks.empty() ? 0 : 1);
+  const int coverCellCount = tileSelectable ? coverCount : (tileBooks.empty() ? 0 : 1);
   int touchedBook = -1;
   const auto coverTouch = mappedInput.colTouch(
       touchedBook, metrics.contentSidePadding, coverColumnWidth, coverCellCount, metrics.homeTopPadding,
       metrics.homeTopPadding + metrics.homeCoverTileHeight, tileSelectable ? coverColumnWidth : 0);
   if (coverTouch != MappedInputManager::RowTouch::None) {
     if (!tileSelectable) {
-      if (coverTouch == MappedInputManager::RowTouch::Tap) onSelectBook(recentBooks[0].path);
+      if (coverTouch == MappedInputManager::RowTouch::Tap) onSelectBook(tileBooks[0].path);
       return;
     }
     if (coverTouch == MappedInputManager::RowTouch::Down) {
@@ -1053,7 +1001,7 @@ void HomeActivity::render(RenderLock&&) {
   // homeTopPadding, so the height must shrink by topPadding or the band (and a
   // centered title, e.g. RoundedRaff's book title) sinks into the tile.
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding - metrics.topPadding},
-                 metrics.homeContinueReadingInMenu && !recentBooks.empty() ? recentBooks[0].title.c_str() : nullptr);
+                 metrics.homeContinueReadingInMenu && !tileBooks.empty() ? tileBooks[0].title.c_str() : nullptr);
 
   // Record the tile rect so storeCoverBuffer (called from the theme) knows
   // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
@@ -1063,8 +1011,8 @@ void HomeActivity::render(RenderLock&&) {
   coverRectW = pageWidth;
   coverRectH = metrics.homeCoverTileHeight;
 
-  GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight},
-                          recentBooks, selectorIndex, coverRendered, coverBufferStored, bufferRestored,
+  GUI.drawRecentBookCover(renderer, Rect{0, metrics.homeTopPadding, pageWidth, metrics.homeCoverTileHeight}, tileBooks,
+                          selectorIndex, coverRendered, coverBufferStored, bufferRestored,
                           std::bind(&HomeActivity::storeCoverBuffer, this));
 
   // Everything from just below the tile down to the button hints: the book
@@ -1076,7 +1024,7 @@ void HomeActivity::render(RenderLock&&) {
   // up/down through the list, so only the words change; mapLabels() still
   // places them, and the hardware order Back/Confirm/Left/Right is fixed.
   const bool onNavStrip = selectedNav >= 0;
-  const auto labels = mappedInput.mapLabels(recentBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT),
+  const auto labels = mappedInput.mapLabels(tileBooks.empty() ? "" : tr(STR_RESUME), tr(STR_SELECT),
                                             onNavStrip ? tr(STR_DIR_LEFT) : tr(STR_DIR_UP),
                                             onNavStrip ? tr(STR_DIR_RIGHT) : tr(STR_DIR_DOWN));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
@@ -1100,6 +1048,192 @@ void HomeActivity::render(RenderLock&&) {
     tryDeliverPendingBookFinished();
     trySyncWallpapers();
   }
+}
+
+namespace {
+
+// --- Post-sync discovery ---------------------------------------------------
+// The device-only half of lib/RecentDiscovery: it gathers what decide() needs
+// out of the on-SD manifest index, which is the part that costs I/O. The rule
+// itself lives in that library and is host-tested; nothing here re-decides
+// anything.
+
+// One manifest row that survived the scan below, carrying only what the
+// decision and the insert need. Not ManifestIndexRecord: its contentHash is
+// ~64 bytes of dead weight per row held for the length of a whole index scan.
+struct DiscoveryCandidate {
+  std::string id;
+  std::string path;
+  uint64_t sizeBytes = 0;
+  uint64_t updatedAt = 0;
+};
+
+struct DiscoveryScanCtx {
+  // 0 disables candidate collection entirely -- and with it the SD stat at
+  // the bottom of the callback. What the first sync after pairing uses: it
+  // inserts nothing whatever the manifest holds, so paying ~30 stats to
+  // build a candidate list decide() will throw away is pure cost.
+  size_t maxCandidates = 0;
+  const std::vector<recent_discovery::ListEntry>* current = nullptr;
+  std::vector<DiscoveryCandidate>* candidates = nullptr;
+  std::vector<std::string>* presentRemoteIds = nullptr;
+};
+
+// The file types the recency list can actually open (RecentBooksStore::
+// getDataFromBook() handles exactly these four). The manifest's own
+// "looks like a book" verdict, kept here rather than in lib/RecentDiscovery,
+// which deliberately has no concept of what a book file looks like.
+bool looksLikeBookPath(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  const std::string_view name = std::string_view{path}.substr(slash == std::string::npos ? 0 : slash + 1);
+  return FsHelpers::hasEpubExtension(name) || FsHelpers::hasXtcExtension(name) || FsHelpers::hasTxtExtension(name) ||
+         FsHelpers::hasMarkdownExtension(name);
+}
+
+// listByPrefix("/", ...) callback for runRecentDiscovery(): one pass over the
+// index fills both of decide()'s manifest-side inputs -- the capped candidate
+// list, and which of the list's remote ids the server still has.
+//
+// Ordered cheapest-test-first for the same reason SyncManifest.cpp's
+// onTopUndownloadedCandidate is, and it is the same trick: everything above
+// the last test is string comparison against the handful of entries the
+// recency list holds, and the verdict at the bottom is an SD stat on a card
+// that shares its SPI bus with the display. A record is only stat'd once it has beaten
+// the oldest candidate kept so far, so a scan costs a handful of stats rather
+// than one per book in the library.
+bool onDiscoveryCandidate(void* ctxPtr, const ManifestIndexRecord& record) {
+  auto* ctx = static_cast<DiscoveryScanCtx*>(ctxPtr);
+
+  // Independent of the candidate tests below, and deliberately first: this
+  // confirms ids that ARE already in the list, which every test below skips.
+  // An entry whose id stops appearing here was deleted on the server, and
+  // decide() drops it.
+  for (const recent_discovery::ListEntry& entry : *ctx->current) {
+    if (!entry.remoteId.empty() && entry.remoteId == record.id) {
+      ctx->presentRemoteIds->push_back(record.id);
+      break;
+    }
+  }
+
+  if (ctx->maxCandidates == 0) return true;  // first sync -- nothing will be inserted, so skip the stat
+  if (record.downloaded) return true;        // free, and always false today (see SyncManifest.h)
+  for (const recent_discovery::ListEntry& entry : *ctx->current) {
+    if (entry.path == record.path) return true;  // already in the list, local or remote
+  }
+  if (!looksLikeBookPath(record.path)) return true;
+
+  auto& out = *ctx->candidates;
+  size_t pos = out.size();
+  while (pos > 0 && out[pos - 1].updatedAt < record.updatedAt) pos--;
+  if (pos >= ctx->maxCandidates) return true;  // older than every kept candidate -- would not make the cut
+
+  // Only now, for a record that would actually make the cut: the manifest
+  // path is the local path verbatim (BookDownloader.cpp sets destPath =
+  // record.path), so a file at it is this book, already on the card.
+  if (Storage.exists(record.path.c_str())) return true;
+
+  DiscoveryCandidate candidate{record.id, record.path, record.sizeBytes, record.updatedAt};
+  if (out.size() < ctx->maxCandidates) {
+    out.insert(out.begin() + static_cast<std::ptrdiff_t>(pos), std::move(candidate));
+  } else {
+    // At the cap: shift the tail down in place and overwrite the last slot,
+    // rather than insert()+pop_back(), which would transiently grow the
+    // vector past its reserve().
+    for (size_t i = out.size() - 1; i > pos; i--) out[i] = std::move(out[i - 1]);
+    out[pos] = std::move(candidate);
+  }
+  return true;
+}
+
+}  // namespace
+
+void HomeActivity::runRecentDiscovery() {
+  recent_discovery::Input input;
+  // The first sync against a pairing seeds the marker and inserts nothing --
+  // otherwise a freshly paired device pulls the owner's whole library in as
+  // "new". The marker lives with the pairing, so unlinking forgets it and a
+  // re-pair behaves like a fresh device (SyncCredentialStore.h).
+  input.firstSync = !SYNC_STORE.isManifestSeeded();
+
+  const std::vector<RecentBook> books = RECENT_BOOKS.getBooks();
+  input.current.reserve(books.size());
+  for (const RecentBook& book : books) input.current.push_back({book.path, book.remoteId});
+
+  std::vector<DiscoveryCandidate> candidates;
+  std::vector<std::string> presentRemoteIds;
+  // The list's remote budget, not its size: anything past that is trimmed
+  // the moment it is inserted, so collecting it costs an SD stat in the scan
+  // and an SD write of the whole list on insert, for nothing.
+  const size_t maxCandidates = input.firstSync ? 0 : static_cast<size_t>(RecentBooksStore::MAX_REMOTE_RECENT_BOOKS);
+  input.maxInsert = maxCandidates;
+  candidates.reserve(maxCandidates);
+  presentRemoteIds.reserve(input.current.size());
+  DiscoveryScanCtx ctx{maxCandidates, &input.current, &candidates, &presentRemoteIds};
+
+  // "/" matches every record -- the server always sends an absolute path --
+  // so this is one whole-index scan, in small fixed-size chunks. Runs even on
+  // a first sync: the removal rule still applies, and a remote entry left
+  // over from a previous pairing is exactly what it has to clear.
+  if (!sync_manifest::listByPrefix("/", &onDiscoveryCandidate, &ctx)) {
+    LOG_ERR("HOME", "Recent discovery: index scan failed, leaving the list untouched");
+    return;
+  }
+
+  input.manifest.reserve(candidates.size() + presentRemoteIds.size());
+  for (const DiscoveryCandidate& candidate : candidates) {
+    input.manifest.push_back({candidate.id, candidate.path, candidate.updatedAt, /*looksLikeBook=*/true});
+  }
+  // Entries already in the list, carried with their real path so decide()
+  // recognises them as present rather than re-inserting them. Their updatedAt
+  // is never read: only a record that can be inserted is ever sorted, and
+  // these never can be. Without them the scan's cap -- which excludes every
+  // already-listed record -- would read as "deleted on the server".
+  for (const recent_discovery::ListEntry& entry : input.current) {
+    if (entry.remoteId.empty()) continue;
+    if (std::find(presentRemoteIds.begin(), presentRemoteIds.end(), entry.remoteId) == presentRemoteIds.end()) continue;
+    input.manifest.push_back({entry.remoteId, entry.path, 0, true});
+  }
+
+  const recent_discovery::Result decision = recent_discovery::decide(input);
+
+  // Drops first: they free room in a capped list before the inserts below
+  // compete for it.
+  for (const std::string& id : decision.dropRemoteIds) {
+    for (const recent_discovery::ListEntry& entry : input.current) {
+      if (entry.remoteId != id) continue;
+      LOG_DBG("HOME", "Recent discovery: dropping %s, gone from the server", entry.path.c_str());
+      RECENT_BOOKS.removeByPath(entry.path);
+      break;
+    }
+  }
+
+  // Walked backwards: insertFront is most-recent-first and addRemoteBook()
+  // inserts at position 0, so the oldest has to go in first for the most
+  // recent to end up leading the list.
+  for (size_t i = decision.insertFront.size(); i > 0; i--) {
+    const recent_discovery::ManifestView& view = decision.insertFront[i - 1];
+    uint64_t sizeBytes = 0;
+    for (const DiscoveryCandidate& candidate : candidates) {
+      if (candidate.id == view.id) {
+        sizeBytes = candidate.sizeBytes;
+        break;
+      }
+    }
+    LOG_DBG("HOME", "Recent discovery: new book %s", view.path.c_str());
+    RECENT_BOOKS.addRemoteBook(view.id, view.path, sizeBytes);
+  }
+
+  // Only once the scan actually completed, so a failed one seeds nothing and
+  // the next sync still gets its one quiet pass.
+  SYNC_STORE.setManifestSeeded();
+
+  LOG_DBG("HOME", "Recent discovery: %u inserted, %u dropped (firstSync=%s)", (unsigned)decision.insertFront.size(),
+          (unsigned)decision.dropRemoteIds.size(), input.firstSync ? "yes" : "no");
+  // This activity's own copy of the list is refreshed by the rebuild
+  // trySyncLibrary() has already scheduled through slotsRebuildPending:
+  // rebuildSlots() re-reads RECENT_BOOKS under its own RenderLock, which this
+  // function -- running on the render task with the rendering mutex held --
+  // cannot take itself.
 }
 
 void HomeActivity::trySyncLibrary() {
@@ -1197,16 +1331,21 @@ void HomeActivity::trySyncLibrary() {
   requestUpdate();  // redraw Home without the popup
 
   if (syncResult.ok) {
-    // onEnter() built slots_ from the index as it was BEFORE this sync, so on
-    // the one boot that actually discovers a new book Home would otherwise
-    // show nothing until the reader navigated away and back -- the exact
-    // problem the rows exist to solve.
+    // onEnter() built slots_ from the recency list as it was BEFORE this
+    // sync, so on the one boot that actually discovers a new book Home would
+    // otherwise show nothing until the reader navigated away and back -- the
+    // exact problem the rows exist to solve.
     //
     // A flag, not a rebuildSlots() call: this runs on the render task inside
     // render(), which already holds the rendering mutex, and rebuildSlots()
     // takes RenderLock, which is not recursive. Calling it here deadlocks the
     // render task against itself. loop() does the rebuild and the repaint.
     slotsRebuildPending = true;
+
+    // Merge what the sync learned into the one recency list, before that
+    // rebuild runs. Touches only RECENT_BOOKS, never slots_ or this
+    // activity's own copy of the list, for the reason above.
+    runRecentDiscovery();
   }
 
   if (libraryWifiBringUpAwaitingSyncResult) {

@@ -40,6 +40,7 @@
 #include <Logging.h>
 
 #include "DownloadPaths.h"
+#include "RecentBooksStore.h"
 #include "SyncCredentialStore.h"
 #include "SyncManifest.h"
 #include "network/HttpDownloader.h"
@@ -190,6 +191,12 @@ DownloadResult download(const std::string& id, ProgressCallback onProgress, void
   }
 
   result.ok = true;
+  // The recency list learns what the index just did, from the same moment:
+  // the entry stops being remote and becomes an ordinary local book, keeping
+  // its position (a completed download is not an event the reader caused, so
+  // it must not jump to the front). No-op for a book that was never a remote
+  // entry -- a download started from the file browser, say.
+  RECENT_BOOKS.markDownloaded(record.path);
   if (!sync_manifest::markDownloaded(id)) {
     LOG_ERR("BOOKDL", "Downloaded %s but failed to flip its index flag", record.path.c_str());
     result.error = "index_update_failed";  // ok stays true -- see file header comment

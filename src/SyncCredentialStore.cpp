@@ -12,6 +12,7 @@ constexpr char KEY_ACCESS_TOKEN[] = "tok";
 constexpr char KEY_DEVICE_ID[] = "devId";
 constexpr char KEY_DEVICE_NAME[] = "devName";
 constexpr char KEY_ACCOUNT_EMAIL[] = "email";
+constexpr char KEY_MANIFEST_SEEDED[] = "mfSeed";
 
 // Default CrossPoint Sync server; self-hosters point elsewhere via the
 // "Server URL" setting (see SettingsList.h / SyncSettingsActivity).
@@ -43,6 +44,7 @@ bool SyncCredentialStore::load() {
     deviceId_.clear();
     deviceName_.clear();
     accountEmail_.clear();
+    manifestSeeded_ = false;
     return true;
   }
   serverUrl_ = prefs.getString(KEY_SERVER_URL, "").c_str();
@@ -50,6 +52,10 @@ bool SyncCredentialStore::load() {
   deviceId_ = prefs.getString(KEY_DEVICE_ID, "").c_str();
   deviceName_ = prefs.getString(KEY_DEVICE_NAME, "").c_str();
   accountEmail_ = prefs.getString(KEY_ACCOUNT_EMAIL, "").c_str();
+  // Absent (paired by an older firmware, or never synced) reads as false, so
+  // an already-paired reader spends one sync seeding instead of importing its
+  // whole library at once -- the safe direction to be wrong in.
+  manifestSeeded_ = prefs.getBool(KEY_MANIFEST_SEEDED, false);
   prefs.end();
   LOG_DBG("SYNC", "Loaded sync credentials from NVS (paired=%s)", isPaired() ? "yes" : "no");
   return true;
@@ -89,14 +95,29 @@ bool SyncCredentialStore::setPairing(const std::string& accessToken, const std::
   prefs.putString(KEY_DEVICE_ID, deviceId.c_str());
   prefs.putString(KEY_DEVICE_NAME, deviceName.c_str());
   prefs.putString(KEY_ACCOUNT_EMAIL, accountEmail.c_str());
+  // A new pairing is a new account: its first sync seeds again.
+  prefs.remove(KEY_MANIFEST_SEEDED);
   prefs.end();
 
+  manifestSeeded_ = false;
   accessToken_ = accessToken;
   deviceId_ = deviceId;
   deviceName_ = deviceName;
   accountEmail_ = accountEmail;
   LOG_DBG("SYNC", "Paired as %s (device %s)", accountEmail_.c_str(), deviceId_.c_str());
   return true;
+}
+
+void SyncCredentialStore::setManifestSeeded() {
+  if (manifestSeeded_) return;  // already seeded -- no second NVS write
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) {
+    LOG_ERR("SYNC", "Failed to open NVS namespace to save the first-sync marker");
+    return;
+  }
+  prefs.putBool(KEY_MANIFEST_SEEDED, true);
+  prefs.end();
+  manifestSeeded_ = true;
 }
 
 void SyncCredentialStore::clearPairing() {
@@ -106,12 +127,16 @@ void SyncCredentialStore::clearPairing() {
     prefs.remove(KEY_DEVICE_ID);
     prefs.remove(KEY_DEVICE_NAME);
     prefs.remove(KEY_ACCOUNT_EMAIL);
+    // Forgotten with the pairing it belongs to, so pairing again starts from
+    // a seeding sync rather than importing the new account's whole library.
+    prefs.remove(KEY_MANIFEST_SEEDED);
     prefs.end();
   }
   accessToken_.clear();
   deviceId_.clear();
   deviceName_.clear();
   accountEmail_.clear();
+  manifestSeeded_ = false;
   LOG_DBG("SYNC", "Cleared sync pairing");
 }
 
@@ -126,5 +151,6 @@ void SyncCredentialStore::clearAll() {
   deviceId_.clear();
   deviceName_.clear();
   accountEmail_.clear();
+  manifestSeeded_ = false;
   LOG_DBG("SYNC", "Cleared all sync credentials (server URL reset to default)");
 }

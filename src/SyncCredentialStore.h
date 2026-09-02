@@ -52,8 +52,24 @@ class SyncCredentialStore {
   const std::string& getDeviceName() const { return deviceName_; }
   const std::string& getAccountEmail() const { return accountEmail_; }
 
-  // Forgets the pairing (token/deviceId/deviceName/accountEmail) but keeps
-  // the server URL override -- what "Unlink Device" in Settings does.
+  // --- First-sync seed marker -------------------------------------------
+  // True once a manifest sync has completed against this pairing. It is what
+  // makes recent_discovery::decide()'s firstSync exactly one sync long: the
+  // first sync after pairing must insert nothing, or a freshly paired device
+  // pulls the owner's entire library into the recency list as "new" (see
+  // docs/superpowers/specs/2026-09-02-one-recency-list-design.md). Kept with
+  // the pairing rather than in state.json so clearPairing() below clears it
+  // for free -- one place forgets an account, not two -- and a re-pair
+  // behaves like a fresh device.
+  bool isManifestSeeded() const { return manifestSeeded_; }
+
+  // Records that the first sync against this pairing has now happened.
+  // No-op, and no NVS write, once it is already set.
+  void setManifestSeeded();
+
+  // Forgets the pairing (token/deviceId/deviceName/accountEmail, and the
+  // first-sync seed marker above) but keeps the server URL override -- what
+  // "Unlink Device" in Settings does.
   void clearPairing();
 
   // Forgets everything, including the server URL override -- full reset.
@@ -67,6 +83,7 @@ class SyncCredentialStore {
   std::string deviceId_;
   std::string deviceName_;
   std::string accountEmail_;
+  bool manifestSeeded_ = false;
 };
 
 // Helper macro to access the store, matching WIFI_STORE / KOREADER_STORE.
