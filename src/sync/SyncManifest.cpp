@@ -475,6 +475,55 @@ bool listByPrefix(const std::string& folderPrefix, ManifestIndexPrefixScan::Matc
   return scanIndex(scan);
 }
 
+namespace {
+struct TopUndownloadedCtx {
+  size_t maxOut;
+  std::vector<ManifestIndexRecord>* out;
+};
+
+// topUndownloaded()'s listByPrefix callback: keeps `out` sorted newest-first (highest updatedAt)
+// and capped at maxOut, inserting each candidate in place rather than collecting everything and
+// sorting afterwards -- see SyncManifest.h's doc comment for why that bound matters.
+//
+// The three tests below are ordered cheapest-first on purpose. record.downloaded is free but is
+// always false today (see this file's header note and FileBrowserMerge.h), so it filters nothing
+// and the real verdict is the SD stat at the bottom -- which is why the updatedAt cut has to run
+// between them. Reversing that order would stat every record in the index, and the card shares its
+// SPI bus with the display.
+bool onTopUndownloadedCandidate(void* ctxPtr, const ManifestIndexRecord& record) {
+  auto* ctx = static_cast<TopUndownloadedCtx*>(ctxPtr);
+  if (record.downloaded) return true;  // keep scanning; only undownloaded rows are candidates
+
+  auto& out = *ctx->out;
+  size_t pos = out.size();
+  while (pos > 0 && out[pos - 1].updatedAt < record.updatedAt) pos--;
+  if (pos >= ctx->maxOut) return true;  // older than every kept record -- would not make the cut
+
+  // Only now, for a record that would actually make the cut: the manifest path is the local path
+  // verbatim (BookDownloader.cpp sets destPath = record.path), so a file at it is this book,
+  // already on the card. Same verdict FolderMerge reaches from its directory listing.
+  if (Storage.exists(record.path.c_str())) return true;
+
+  if (out.size() < ctx->maxOut) {
+    out.insert(out.begin() + static_cast<std::ptrdiff_t>(pos), record);
+  } else {
+    // Already at the cap: shift the tail down in place and overwrite the last slot, rather than
+    // insert()+pop_back(), which would transiently grow the vector past its maxOut reserve().
+    for (size_t i = out.size() - 1; i > pos; i--) out[i] = std::move(out[i - 1]);
+    out[pos] = record;
+  }
+  return true;
+}
+}  // namespace
+
+bool topUndownloaded(size_t maxOut, std::vector<ManifestIndexRecord>& out) {
+  out.clear();
+  if (maxOut == 0) return true;
+  out.reserve(maxOut);
+  TopUndownloadedCtx ctx{maxOut, &out};
+  return listByPrefix("/", &onTopUndownloadedCandidate, &ctx);
+}
+
 bool findById(const std::string& id, ManifestIndexRecord& out) {
   ManifestIndexIdLookup lookup(id);
   scanIndex(lookup);

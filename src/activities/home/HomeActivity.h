@@ -1,4 +1,6 @@
 #pragma once
+#include <HomeBookSlots.h>
+
 #include <functional>
 #include <vector>
 
@@ -29,6 +31,10 @@ class HomeActivity final : public Activity {
   std::vector<RecentBook> recentBooks;
   const HomeMenuItem initialMenuItem;
   const bool cleanInitialRefresh;
+  // The home_book_slots rows below the cover tile, drawn by drawSlotBand().
+  // Populated by rebuildSlots() -- see its comment for where each field of
+  // its Input comes from.
+  std::vector<home_book_slots::Slot> slots_;
 
   // Convert HomeMenuItem to menu index (used in onEnter)
   static int menuItemToIndex(HomeMenuItem item) {
@@ -68,19 +74,89 @@ class HomeActivity final : public Activity {
   void onFileTransferOpen();
 
   int getMenuItemCount() const;
-  // The menu's text labels, in display order (File Browser/Recents/File
-  // Transfer/Settings, with Continue Reading prepended when
-  // the active theme's homeContinueReadingInMenu is set and there's a
-  // recent book). Factored out of render() so CMD:SELECTED's accessor below
-  // can report the same list without duplicating -- or drifting from --
-  // render()'s conditional insert logic. Icons are still built inline in
-  // render(); only the text labels are shared.
-  std::vector<const char*> buildMenuLabels() const;
+  // Every length in the band between the cover tile and the button hints,
+  // computed once. drawSlotBand() lays out from it and loop()'s touch grid
+  // hit-tests against it, so a tap can never land somewhere other than what
+  // was drawn -- nothing here is recomputed independently on either side.
+  // All of it is derived from the active ThemeMetrics and the small font's
+  // line height (Classic's band is 310px, Lyra's 446px), never from pixel
+  // constants.
+  struct SlotBandLayout {
+    int x = 0;
+    int width = 0;
+    int height = 0;     // 0 when the theme leaves no room between tile and hints
+    int rowsTop = 0;    // top edge of the first book row
+    int rowHeight = 0;  // one book row; 0 when the band is too short for rows
+    int rowCount = 0;   // rows actually drawn: slots_.size(), capped at SLOT_COUNT
+    int navLabelTop = 0;
+    int navLabelHeight = 0;
+    int navBarTop = 0;
+    int navBarHeight = 0;
+    int navCellWidth = 0;  // one of the four equal nav cells
+  };
+  SlotBandLayout slotBandLayout() const;
+  // Everything between the cover tile and the button hints: one row per entry
+  // in slots_, then the four-icon nav strip, whose selected item's label sits
+  // above the strip's top rule rather than under its own icon (a label as long
+  // as "File Transfer" does not fit a quarter-width cell). Immediate-mode: it
+  // draws once per render() and never schedules a repaint of its own, because
+  // a repaint that lands mid-download has no heap to run in.
+  void drawSlotBand(const SlotBandLayout& layout, int selectedSlot, int selectedNav) const;
+  // Selector positions the cover tile owns, ahead of the book rows. The
+  // condition mirrors buildMenuLabels()'s old "is Continue Reading folded into
+  // the menu" one: with it folded in the tile is a single selector position,
+  // otherwise it is one per displayed cover.
+  int coverSelectionCount() const;
+  // Book rows the band actually draws -- the selector's middle stretch.
+  int slotRowCount() const;
+  // Which book row the selector is on, or -1 when it is on the tile or the
+  // nav strip.
+  int slotSelectionIndex() const;
+  // Which of the four nav icons the selector is on, or -1 when it is still on
+  // the tile or a book row. The selector runs tile -> rows -> nav strip, so
+  // the four icons are always the last four positions.
+  int navSelectionIndex() const;
+  // Runs the row's one action: an undownloaded or failed book is enqueued, a
+  // local one is opened, and a book already in the queue does nothing.
+  void activateSlot(const home_book_slots::Slot& slot);
+  // Puts a refused enqueue on screen. Nothing was queued, so no counter moved
+  // and no repaint is coming; without a popup the row would just sit there.
+  void showEnqueueRefused(download_queue::EnqueueOutcome outcome);
+  // Set by trySyncLibrary() when a sync changed the index, consumed by the
+  // next loop() pass. It cannot rebuild in place: trySyncLibrary() runs on the
+  // render task with the rendering mutex already held, and rebuildSlots()
+  // takes the non-recursive RenderLock.
+  bool slotsRebuildPending = false;
+  // Refreshes the rows when the queue moved, and only then: a book entering
+  // the queue, a download starting, and a download ending are the three
+  // moments Home may repaint, because during a transfer the largest
+  // contiguous heap block is a few KB and a repaint that cannot allocate
+  // aborts the device. Costs two integer compares on every other pass.
+  void pollDownloadQueue();
+  // Last download_queue::pulse() this activity acted on, seeded in onEnter()
+  // so entering mid-download does not rebuild for a change that predates it.
+  uint32_t lastPulseGeneration = 0;
+  uint32_t lastPulseCompletions = 0;
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
   void loadRecentBooks(int maxBooks);
   void loadRecentCovers(int coverHeight);
+  // Number of leading recentBooks entries that actually occupy a
+  // selector/cover position on screen -- the theme's own
+  // metrics.homeRecentBooksCount (1, or 3 for Lyra3Covers), capped by however
+  // many recents there actually are. Every place that used to read
+  // recentBooks.size() to mean "how many cover tiles are shown" (menu-item
+  // counting, selectorIndex offsets, loadRecentCovers()'s thumbnail loop)
+  // must use this instead now that loadRecentBooks() fetches more recents
+  // than the tile displays, to feed rebuildSlots().
+  int visibleRecentCount() const;
+  // Gathers the three home_book_slots::Input sources -- topUndownloaded()
+  // for remote, recentBooks for local, download_queue::snapshot() for queue
+  // state -- and stores fill()'s result into slots_ under RenderLock (see
+  // AGENTS.md's RenderLock rule; buildScreen() reads slots_ on the render
+  // task).
+  void rebuildSlots();
   // Automatic "check whether there are new files" sync: runs at most once
   // per boot, the first time the library screen is reached, and only if
   // already paired (see lib/SyncManifest/SyncTriggerPolicy.h for the exact

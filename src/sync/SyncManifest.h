@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "ManifestIndexFormat.h"
 #include "ManifestIndexQuery.h"
@@ -98,6 +99,30 @@ SyncResult sync(uint32_t timeoutMs = sync_trigger::EXPLICIT_SYNC_TIMEOUT_MS);
 // return true). `ctx` is passed back to onMatch unchanged; the caller owns
 // it and must keep it alive for the duration of this call.
 bool listByPrefix(const std::string& folderPrefix, ManifestIndexPrefixScan::MatchCallback onMatch, void* ctx);
+
+// Fills `out` with at most maxOut records for books the server has that this device does not,
+// newest (highest updatedAt) first.
+//
+// "Does not have" means the file is absent from the SD card, tested with Storage.exists() on the
+// record's path -- NOT record.downloaded. That flag is checked first because it is free and would
+// stay correct if a future downloader ever set it, but it is always false today: every upsert,
+// full sync and delta alike, writes false deliberately (see SyncManifest.cpp's header note, and
+// FileBrowserMerge.h's "always false today"), because the index cannot know whether a local file
+// still matches and guessing optimistically would hide a stale copy. Trusting the flag alone made
+// Home offer to download books that were already on the device, and contradicted the file browser,
+// whose FolderMerge reaches its verdict the same way this does -- from what is actually on the
+// card. Do not re-simplify this back to the flag.
+//
+// Built on listByPrefix("/", ...) -- "/" matches every record, since the server always sends an
+// absolute path (see ManifestEntry.h's example line), so this is a whole-index scan, not a
+// single-folder one: Home is not meant to know which folder a new book landed in. `out` is kept
+// sorted and capped at maxOut throughout the scan (a candidate that wouldn't make the cut is
+// dropped immediately), so peak memory is bounded by maxOut, never by how many books the account
+// has. That same cut also gates the SD stat: a record is only stat'd once it beats the worst kept
+// candidate, so a scan costs a handful of stats, not one per record -- the card shares its SPI bus
+// with the display. Returns false only on a genuine read/parse error (a missing index or fewer
+// than maxOut missing-locally records both return true, with `out` holding whatever it found).
+bool topUndownloaded(size_t maxOut, std::vector<ManifestIndexRecord>& out);
 
 // Looks up a single entry by its stable id -- how a rename is told apart
 // from a new book (crosspoint-sync docs/API.md: "id is stable across
