@@ -87,10 +87,38 @@ class QueueState {
   };
   const LastResult& lastResult() const { return lastResult_; }
 
+  // Change-detector for a UI that has no callback to hang off: the queue is
+  // poll-only, so a screen showing per-book status (FileBrowserActivity's
+  // placeholder rows) has to ask "did anything change?" on every loop pass.
+  // Doing that with copyItemsTo()/snapshot() would copy MAX_QUEUE items of
+  // std::string every tick; comparing these two counters instead is a pair of
+  // integer loads.
+  //
+  // generation() bumps on any membership or status change -- enqueue, the
+  // flip to Downloading, finish, a cancel that actually emptied something --
+  // but deliberately NOT on updateProgress(): that fires once per HTTP chunk
+  // and no row renders a percentage, so it would repaint an e-ink screen
+  // hundreds of times per book for no visible difference. A call that turns
+  // out to be a no-op (a duplicate/overflowing enqueue, a transition for an
+  // id that is no longer the front) leaves it alone, so the poller does not
+  // rebuild on a race it cannot see.
+  //
+  // completions() bumps only on a successful finish(), which is the stronger
+  // signal: a book that finished is a real file on SD now, so the reader of
+  // this counter must re-list the directory, not just re-derive status text.
+  // A failure and a cancel both leave it untouched -- neither created a file.
+  //
+  // Both are monotonic and never reset; consumers cache the last value they
+  // saw and compare for inequality, so wraparound is harmless.
+  uint32_t generation() const { return generation_; }
+  uint32_t completions() const { return completions_; }
+
  private:
   QueueItem items_[MAX_QUEUE];
   size_t count_ = 0;
   LastResult lastResult_;
+  uint32_t generation_ = 0;
+  uint32_t completions_ = 0;
 };
 
 }  // namespace download_queue

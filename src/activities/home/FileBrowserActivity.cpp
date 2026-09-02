@@ -237,6 +237,59 @@ void FileBrowserActivity::onEnter() {
   } else {
     loadFiles();
   }
+
+  // The rows above already reflect the queue as it stands, so entering a
+  // folder mid-download starts in sync rather than rebuilding on the first
+  // poll for a change that predates this activity.
+  const download_queue::Pulse pulse = download_queue::pulse();
+  lastPulseGeneration = pulse.generation;
+  lastPulseCompletions = pulse.completions;
+}
+
+void FileBrowserActivity::loop() {
+  pollDownloadQueue();  // before the base: UiListActivity::loop() returns early once input is handled
+  UiListActivity::loop();
+}
+
+void FileBrowserActivity::holdScreenForPopup() { popupHoldsScreenUntilMs = millis() + POPUP_READ_MS; }
+
+void FileBrowserActivity::pollDownloadQueue() {
+  if (mode != Mode::Books) return;  // placeholder rows only exist in the reader browser
+
+  // Checked before the pulse is read, deliberately: leaving the counters
+  // unconsumed means the refresh is deferred to the first poll after the
+  // popup's window, not dropped. Wraparound-safe compare -- millis() rolls
+  // over about every 49 days.
+  if (popupHoldsScreenUntilMs != 0 && static_cast<int32_t>(millis() - popupHoldsScreenUntilMs) < 0) return;
+
+  const download_queue::Pulse pulse = download_queue::pulse();
+  if (pulse.generation == lastPulseGeneration && pulse.completions == lastPulseCompletions) return;
+
+  const bool completed = pulse.completions != lastPulseCompletions;
+  lastPulseGeneration = pulse.generation;
+  lastPulseCompletions = pulse.completions;
+
+  {
+    // buildScreen() reads the row caches on the render task; RenderLock is
+    // non-recursive, so it is released before UiListActivity::loop() runs and
+    // takes it for itself on the swipe path.
+    RenderLock lock(*this);
+    if (completed) {
+      // A finished book is a real file now: the placeholder has to become a
+      // local row, which only a fresh SD listing can decide.
+      loadFiles();
+      if (files.empty()) {
+        nav.selected = 0;
+      } else if (nav.selected >= listCount()) {
+        nav.selected = listCount() - 1;
+      }
+      nav.follow(listCount());
+    } else {
+      rebuildRowItems();  // status text only -- the folder's contents did not change
+    }
+  }
+
+  requestUpdate();
 }
 
 void FileBrowserActivity::onExit() {
@@ -362,6 +415,7 @@ void FileBrowserActivity::performServerDeleteThenLocal(const std::string& fullPa
       // loadFiles() mutations above already take for the same reason.
       RenderLock lock(*this);
       GUI.drawPopup(renderer, tr(STR_DELETING_FROM_SERVER));
+      holdScreenForPopup();
     }
 
     const book_server_delete::Result result = book_server_delete::deleteFromServer(manifestId);
@@ -371,6 +425,7 @@ void FileBrowserActivity::performServerDeleteThenLocal(const std::string& fullPa
       {
         RenderLock lock(*this);
         GUI.drawPopup(renderer, tr(STR_SERVER_DELETE_FAILED));
+        holdScreenForPopup();
       }
       // No requestUpdate() here: an immediate re-render would erase the
       // error popup before it's readable, same as EpubReaderActivity's own
@@ -413,7 +468,10 @@ void FileBrowserActivity::requestBookDownload(const std::string& remoteId) {
     LOG_ERR("FileBrowser", "Enqueue failed: id=%s outcome=%d", remoteId.c_str(), static_cast<int>(outcome));
     return;
   }
-  requestUpdate();  // redraw so the row reports itself as downloading
+  // No redraw here: the enqueue bumped the queue's generation, so
+  // pollDownloadQueue() rebuilds the row and repaints it on the next loop
+  // pass -- the same one mechanism that later flips it again when the
+  // download finishes.
 }
 
 bool FileBrowserActivity::isQueued(const download_queue::Snapshot& snap, const std::string& remoteId) {
@@ -468,8 +526,6 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
     // Nothing to open and nothing to delete -- a placeholder's file doesn't exist on the device
     // yet, so both a short-press/tap and a long-press route here instead of into the open/delete
     // branches below.
-    std::string cleanBasePath = basepath;
-    if (cleanBasePath.back() != '/') cleanBasePath += "/";
     requestBookDownload(fileRemoteId[nav.selected]);
     return;
   }
@@ -494,6 +550,7 @@ void FileBrowserActivity::activateSelected(const bool forceDelete) {
       // immediate re-render would erase this before it's readable.
       RenderLock lock(*this);
       GUI.drawPopup(renderer, tr(STR_NOTHING_TO_DELETE));
+      holdScreenForPopup();
       return;
     }
 

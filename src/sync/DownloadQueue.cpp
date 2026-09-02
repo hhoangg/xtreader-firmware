@@ -108,6 +108,14 @@ class Worker {
     return s;
   }
 
+  // Both counters read under one lock acquisition: a caller comparing them
+  // against its own cached pair must see a consistent pair, not one from
+  // before a finish() and one from after.
+  Pulse pulse() {
+    Lock lock(mutex_);
+    return Pulse{state_.generation(), state_.completions()};
+  }
+
   void setSafetyCheck(SafetyCheck fn) {
     Lock lock(mutex_);
     safetyCheck_ = fn;
@@ -217,5 +225,7 @@ EnqueueOutcome enqueue(const std::string& id) { return gWorker.enqueue(id); }
 void cancelAll() { gWorker.cancelAll(); }
 
 Snapshot snapshot() { return gWorker.snapshot(); }
+
+Pulse pulse() { return gWorker.pulse(); }
 
 }  // namespace download_queue

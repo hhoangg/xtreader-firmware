@@ -11,6 +11,7 @@ QueueState::EnqueueResult QueueState::enqueue(const std::string& id, const std::
   item.id = id;
   item.path = path;
   item.totalBytes = totalBytes;
+  generation_++;
   return EnqueueResult::Ok;
 }
 
@@ -25,7 +26,9 @@ const QueueItem* QueueState::front() const { return count_ > 0 ? &items_[0] : nu
 
 void QueueState::markDownloading(const std::string& id) {
   if (count_ == 0 || items_[0].id != id) return;
+  if (items_[0].status == ItemStatus::Downloading) return;  // already flipped -- not a change
   items_[0].status = ItemStatus::Downloading;
+  generation_++;
 }
 
 void QueueState::updateProgress(const std::string& id, uint64_t downloadedBytes, uint64_t totalBytes) {
@@ -43,9 +46,15 @@ void QueueState::finish(const std::string& id, bool ok, const std::string& error
     items_[i - 1] = std::move(items_[i]);
   }
   count_--;
+  generation_++;
+  if (ok) completions_++;
 }
 
-void QueueState::cancelAll() { count_ = 0; }
+void QueueState::cancelAll() {
+  if (count_ == 0) return;  // nothing was emptied -- not a change
+  count_ = 0;
+  generation_++;
+}
 
 size_t QueueState::copyItemsTo(QueueItem* out, size_t maxOut) const {
   const size_t n = count_ < maxOut ? count_ : maxOut;

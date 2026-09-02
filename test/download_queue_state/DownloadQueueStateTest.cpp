@@ -178,4 +178,130 @@ TEST(QueueStateSnapshot, CopyItemsToCapsAtMaxOut) {
   EXPECT_EQ(items[2].id, "bok_2");
 }
 
+// The two monotonic counters FileBrowserActivity::pollDownloadQueue() polls
+// instead of taking a full snapshot() every tick.
+
+TEST(QueueStatePulse, StartsAtZero) {
+  QueueState q;
+  EXPECT_EQ(q.generation(), 0u);
+  EXPECT_EQ(q.completions(), 0u);
+}
+
+TEST(QueueStatePulse, GenerationAdvancesOnAnAcceptedEnqueue) {
+  QueueState q;
+  const uint32_t before = q.generation();
+  ASSERT_EQ(q.enqueue("bok_1", "/a.epub", 100), QueueState::EnqueueResult::Ok);
+  EXPECT_NE(q.generation(), before);
+}
+
+TEST(QueueStatePulse, GenerationAdvancesOnMarkDownloading) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  const uint32_t before = q.generation();
+  q.markDownloading("bok_1");
+  EXPECT_NE(q.generation(), before);
+}
+
+TEST(QueueStatePulse, GenerationAdvancesOnFinish) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  const uint32_t before = q.generation();
+  q.finish("bok_1", true, "");
+  EXPECT_NE(q.generation(), before);
+}
+
+TEST(QueueStatePulse, GenerationAdvancesOnCancelAllThatEmptiesSomething) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  const uint32_t before = q.generation();
+  q.cancelAll();
+  EXPECT_NE(q.generation(), before);
+}
+
+TEST(QueueStatePulse, GenerationIgnoresProgressTicks) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 1000);
+  q.markDownloading("bok_1");
+  const uint32_t before = q.generation();
+  q.updateProgress("bok_1", 100, 1000);
+  q.updateProgress("bok_1", 900, 1000);
+  // The row shows no percentage, so a per-chunk repaint would be pure cost.
+  EXPECT_EQ(q.generation(), before);
+}
+
+TEST(QueueStatePulse, GenerationIgnoresARejectedEnqueue) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  uint32_t before = q.generation();
+  EXPECT_EQ(q.enqueue("bok_1", "/a.epub", 100), QueueState::EnqueueResult::AlreadyQueued);
+  EXPECT_EQ(q.generation(), before);
+
+  for (size_t i = 1; i < MAX_QUEUE; i++) {
+    ASSERT_EQ(q.enqueue("bok_fill_" + std::to_string(i), "/x.epub", 1), QueueState::EnqueueResult::Ok);
+  }
+  before = q.generation();
+  EXPECT_EQ(q.enqueue("bok_overflow", "/x.epub", 1), QueueState::EnqueueResult::Full);
+  EXPECT_EQ(q.generation(), before);
+}
+
+TEST(QueueStatePulse, GenerationIgnoresNoOpTransitions) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  q.enqueue("bok_2", "/b.epub", 200);
+
+  uint32_t before = q.generation();
+  q.markDownloading("bok_2");  // not the front
+  EXPECT_EQ(q.generation(), before);
+
+  before = q.generation();
+  q.finish("bok_2", true, "");  // not the front
+  EXPECT_EQ(q.generation(), before);
+
+  QueueState empty;
+  before = empty.generation();
+  empty.cancelAll();  // nothing to empty
+  EXPECT_EQ(empty.generation(), before);
+}
+
+TEST(QueueStatePulse, GenerationIgnoresARepeatedMarkDownloading) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  q.markDownloading("bok_1");
+  const uint32_t before = q.generation();
+  q.markDownloading("bok_1");  // already Downloading -- nothing changed
+  EXPECT_EQ(q.generation(), before);
+}
+
+TEST(QueueStatePulse, CompletionsCountOnlySuccessfulFinishes) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  q.enqueue("bok_2", "/b.epub", 200);
+  q.enqueue("bok_3", "/c.epub", 300);
+
+  EXPECT_EQ(q.completions(), 0u);
+  q.finish("bok_1", true, "");
+  EXPECT_EQ(q.completions(), 1u);
+
+  q.finish("bok_2", false, "fetch_failed");  // a failure is not a completion
+  EXPECT_EQ(q.completions(), 1u);
+
+  q.finish("bok_3", true, "");
+  EXPECT_EQ(q.completions(), 2u);
+}
+
+TEST(QueueStatePulse, CompletionsIgnoreANoOpFinishAndCancelAll) {
+  QueueState q;
+  q.enqueue("bok_1", "/a.epub", 100);
+  q.enqueue("bok_2", "/b.epub", 200);
+
+  q.finish("bok_2", true, "");  // not the front -- no item concluded
+  EXPECT_EQ(q.completions(), 0u);
+
+  q.cancelAll();  // a cancel is not a completion
+  EXPECT_EQ(q.completions(), 0u);
+
+  q.finish("bok_1", true, "");  // already dropped by the cancel
+  EXPECT_EQ(q.completions(), 0u);
+}
+
 }  // namespace

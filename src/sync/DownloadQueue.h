@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "QueueState.h"
@@ -60,5 +61,13 @@ struct Snapshot {
   QueueState::LastResult lastResult;  // the most recent finished item, if any
 };
 Snapshot snapshot();
+
+// Cheap change-detector for UI polling: two counters, no strings copied,
+// unlike snapshot(). See FileBrowserActivity::pollDownloadQueue().
+struct Pulse {
+  uint32_t generation = 0;
+  uint32_t completions = 0;
+};
+Pulse pulse();
 
 }  // namespace download_queue

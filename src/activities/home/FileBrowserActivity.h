@@ -61,6 +61,34 @@ class FileBrowserActivity final : public UiListActivity {
 
   void rebuildRowItems();
 
+  // Last download_queue::pulse() this activity acted on. The queue has no
+  // callbacks and the row status text is derived only in rebuildRowItems(),
+  // so without polling a row keeps whatever it said when the folder was
+  // loaded -- "On server" after the reader picks it, "Downloading" forever
+  // after it lands -- until the reader navigates out and back.
+  uint32_t lastPulseGeneration = 0;
+  uint32_t lastPulseCompletions = 0;
+
+  // A popup drawn straight into the framebuffer (GUI.drawPopup) has no
+  // activity of its own: nothing owns it, and the next redraw simply paints
+  // over it. Every redraw on this screen used to be input-driven, which is
+  // what performServerDeleteThenLocal()'s "no requestUpdate() here" comment
+  // relies on to keep an error readable. pollDownloadQueue() is the first
+  // redraw here that no input asked for, so it needs to stand off.
+  //
+  // A deadline, not a flag cleared by input: touch and swipe redraw through
+  // UiListActivity::loop() without passing through anything this class
+  // overrides, so a flag could stay set for the rest of the session and
+  // silence the poll entirely. A deadline cannot get stuck.
+  uint32_t popupHoldsScreenUntilMs = 0;
+  static constexpr uint32_t POPUP_READ_MS = 3000;
+  void holdScreenForPopup();
+  // Refreshes the rows when the queue moved: a status-only change rebuilds
+  // the row text, a completed download re-lists the folder (the book is a
+  // real file now). Called from loop() on every pass; costs two integer
+  // compares when nothing changed.
+  void pollDownloadQueue();
+
   int listCount() const override { return static_cast<int>(files.size()); }
   void buildScreen(UiScreen& screen) override;
   void activateIndex(int index) override;
@@ -110,5 +138,6 @@ class FileBrowserActivity final : public UiListActivity {
   explicit FileBrowserActivity(GfxRenderer& renderer, MappedInputManager& mappedInput, std::string initialPath = "/",
                                Mode mode = Mode::Books);
   void onEnter() override;
+  void loop() override;
   void onExit() override;
 };
