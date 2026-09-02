@@ -41,6 +41,7 @@ class Epub {
   void parseCssFiles() const;
   // Computes cachePath on first use (memoised thereafter). See getCachePath().
   void ensureCachePath() const;
+  CssParser::ParseResult parseCssFiles(CssParser::CacheStatus existingCacheStatus) const;
 
  public:
   explicit Epub(std::string filepath, std::string cacheDir)

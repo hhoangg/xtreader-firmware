@@ -27,6 +27,7 @@
 #include "WallpaperGalleryActivity.h"
 
 #include <Bitmap.h>
+#include <FreeInkUIGfxRenderer.h>
 #include <GfxRenderer.h>
 #include <HalStorage.h>
 #include <I18n.h>
@@ -42,7 +43,9 @@
 #include "SilentRestart.h"
 #include "SyncCredentialStore.h"
 #include "activities/network/WifiSelectionActivity.h"
+#include "components/UIScale.h"
 #include "components/UITheme.h"
+#include "components/UiAppHelpers.h"
 #include "fontIds.h"
 #include "network/HttpDownloader.h"
 #include "sync/WallpaperSync.h"
@@ -731,18 +734,81 @@ wallpaper_grid::Bounds WallpaperGalleryActivity::contentBounds() const {
 }
 
 void WallpaperGalleryActivity::drawChrome() const {
+  namespace fui = freeink::ui;
   const auto& metrics = UITheme::getInstance().getMetrics();
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, renderer.getScreenWidth(), metrics.headerHeight},
                  tr(STR_WALLPAPER_GALLERY));
 
-  std::vector<TabInfo> tabs;
-  tabs.reserve(TAB_COUNT);
+  // The tab band is the FreeInkUI tab bar, styled exactly as
+  // UiTabListActivity::buildTabBar() styles it, drawn straight onto this
+  // immediate-mode screen through a one-slot frame (the same path
+  // BaseTheme::drawHeader() uses). Nothing registers a hit rect: ring_ owns
+  // the selection here, and this screen routes no touch.
+  const auto spec = uiScaleSpec();
+  fui::GfxRendererFrame<1> ui(renderer, spec.smallFontId, spec.bodyFontId, spec.titleFontId);
+  // Refresh the app-wide shared tokens rather than copying ~1.5KB of
+  // ThemeTokens onto this render-path stack frame.
+  const fui::ThemeTokens& tokens = refreshSharedUiThemeTokens(ui.target);
+
+  // Stack array, not a heap vector: this runs on every render and the tab
+  // count is fixed.
+  fui::TabItem tabs[TAB_COUNT];
   for (int i = 0; i < TAB_COUNT; i++) {
-    tabs.push_back(TabInfo{tabLabel(i), i == tabIndex(tab_)});
+    tabs[i].label = tabLabel(i);
+    tabs[i].value = static_cast<int16_t>(i);
+    tabs[i].selected = i == tabIndex(tab_);
   }
-  GUI.drawTabBar(renderer,
-                 Rect{0, metrics.topPadding + metrics.headerHeight, renderer.getScreenWidth(), metrics.tabBarHeight},
-                 tabs, ring_ == RING_TABS);
+
+  const bool tabsFocused = ring_ == RING_TABS;
+  fui::TabBarProps props;
+  props.tabs = tabs;
+  props.count = static_cast<uint8_t>(TAB_COUNT);
+  // Pill shape and label size are theme-driven, as in buildTabBar(): Lyra uses
+  // equal-width slots with small labels, while full-slot (RoundedRaff) fills
+  // the slot with a body-size label and a zero horizontal contentInset so the
+  // tabBar's label-width shrink is disabled.
+  if (metrics.tabPillFullSlot) {
+    props.text = tokens.bodyText;
+    props.tabInset = fui::Insets{4, 4, 7, 4};
+    props.contentInset = fui::Insets{2, 0, 2, 0};
+  } else {
+    props.text = tokens.smallText;
+    props.gap = static_cast<int16_t>(metrics.tabSpacing);
+    // Unfocused: no bottom inset, so the pill (and the 2px underline along its
+    // bottom edge) reaches the band's 1px divider.
+    props.tabInset = tabsFocused ? fui::Insets{2, 4, 4, 4} : fui::Insets{2, 4, 0, 4};
+    props.contentInset = fui::Insets{2, 0, 2, 0};
+  }
+  props.divider = true;
+  fui::StyleSet tabStyles;
+  tabStyles.explicitlySet = true;
+  tabStyles.normal.foreground = fui::Paint::solid(fui::Color::Black);
+  if (tabsFocused) {
+    tabStyles.selected.background = fui::Paint::solid(fui::Color::Black);
+    tabStyles.selected.foreground = fui::Paint::solid(fui::Color::White);
+    tabStyles.selected.radius = tokens.listRowRadius;
+  } else if (metrics.tabPillFullSlot) {
+    tabStyles.selected.background = fui::Paint::dither(fui::Color::DarkGray);
+    tabStyles.selected.foreground = fui::Paint::solid(fui::Color::White);
+    tabStyles.selected.radius = tokens.listRowRadius;
+  } else {
+    tabStyles.selected.background = fui::Paint::dither(fui::Color::LightGray);
+    tabStyles.selected.foreground = fui::Paint::solid(fui::Color::Black);
+    props.selectedUnderline = 2;
+  }
+  tabStyles.focused = tabStyles.selected;
+  tabStyles.active = tabStyles.selected;
+  props.tabStyles = tabStyles;
+
+  // The band keeps the exact rect the grid below it is laid out against
+  // (contentBounds() measures from metrics.tabBarHeight).
+  const fui::Rect band{0, static_cast<int16_t>(metrics.topPadding + metrics.headerHeight),
+                       static_cast<int16_t>(renderer.getScreenWidth()), static_cast<int16_t>(metrics.tabBarHeight)};
+  // Focused band wash is the Lyra treatment; RoundedRaff keeps the band plain.
+  if (tabsFocused && !metrics.tabPillFullSlot) {
+    ui.target.fill(band, fui::Paint::dither(fui::Color::LightGray));
+  }
+  fui::tabBar(ui.frame, band, props);
 }
 
 void WallpaperGalleryActivity::drawTile(const wallpaper_grid::Layout& layout, const int slot,

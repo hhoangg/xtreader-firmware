@@ -45,14 +45,7 @@ class MappedInputManager {
   // it -- see the injected* fields below. Must be called exactly once per
   // loop() iteration, same as gpio.update() itself; src/main.cpp's loop()
   // calls this (not gpio.update() directly) for that reason.
-  void update() const {
-    gpio.update();
-#ifdef CP_TEST_CONSOLE
-    injectedPressPending = false;
-    injectedReleaseEdge = false;
-    injectedHeldOverrideValid = false;
-#endif
-  }
+  void update() const;
 #if FREEINK_CAP_TOUCH
   // X4 Pro delays a single power click until its frontlight double-click window
   // expires. The main loop supplies that one-frame event here.
@@ -60,6 +53,9 @@ class MappedInputManager {
 #endif
   bool wasPressed(Button button) const;
   bool wasReleased(Button button) const;
+  // One-shot threshold event while the button is down; consumes its release.
+  bool wasLongPressed(Button button, unsigned long thresholdMs) const;
+  bool consumeSuppressedRelease() const;
   bool isPressed(Button button) const;
 #ifdef CP_TEST_CONSOLE
   // Test-console synthetic input injection, consulted by wasPressed() (and,
@@ -145,10 +141,8 @@ class MappedInputManager {
   // Returns the raw front button index that was pressed this frame (or -1 if none).
   int getPressedFrontButton() const;
 
-  // True when the control axis is flipped relative to the physical buttons: the user opted into
-  // orientation-following front buttons AND the screen is *currently rendered* rotated (INVERTED /
-  // LANDSCAPE_CCW). Keyed on the live renderer orientation rather than the persisted reader setting,
-  // so portrait UI (home, settings) never swaps while the reader and its menus do.
+  // True when the control axis is flipped relative to the physical buttons: always on touch boards,
+  // or when button-only boards opt in, while the screen is currently INVERTED / LANDSCAPE_CCW.
   [[nodiscard]] bool isNavDirectionSwapped() const;
 
  private:
@@ -174,10 +168,13 @@ class MappedInputManager {
   bool wasPowerConfirmClick() const;
 #endif
   void rememberTouchHeldTime() const;
+  void suppressNextRelease(Button button) const;
 
   mutable bool touchHeldOverrideValid = false;
   mutable unsigned long touchHeldOverrideMs = 0;
   mutable unsigned long touchHeldOverrideAt = 0;
+  mutable uint16_t longPressFiredButtons = 0;
+  mutable uint16_t suppressedReleaseButtons = 0;
 #if FREEINK_CAP_TOUCH
   bool powerConfirmClickFrame = false;
 #endif

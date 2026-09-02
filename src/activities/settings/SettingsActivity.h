@@ -24,6 +24,7 @@ enum class SettingAction {
   DownloadFonts,
   TextSettings,
   WallpaperGallery,
+  KeyboardLayouts,
 };
 
 struct SettingInfo {
