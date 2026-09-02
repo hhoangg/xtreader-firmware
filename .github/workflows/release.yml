@@ -126,6 +126,26 @@ jobs:
           # names stay untouched and cannot collide.
           find artifacts -name 'firmware*.bin' -exec cp {} . \;
           ls -l firmware*.bin
+          # Release notes come from CHANGELOG.md's section for this version, so
+          # what users read is written by a person. --generate-notes cannot do
+          # that job here: it builds its list out of merged pull requests, and
+          # this repo commits straight to develop, so it produced a release body
+          # that was nothing but a "Full Changelog" link. Falling back to it when
+          # the section is missing is deliberate -- a forgotten changelog entry
+          # must not fail a release that has already built four binaries.
+          notes_args="--generate-notes"
+          if [ -f CHANGELOG.md ]; then
+            awk -v v="${TAG#v}" '
+              $0 == "## " v { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md > release-notes.md
+            if [ -s release-notes.md ]; then
+              notes_args="--notes-file release-notes.md"
+            else
+              echo "No CHANGELOG.md section for ${TAG#v}; falling back to generated notes." >&2
+            fi
+          fi
           # A tag carrying "rc" ships as a prerelease: GitHub omits prereleases
           # from /releases/latest, which is the only endpoint OtaUpdater reads,
           # so release candidates never reach a device that did not ask for one.
@@ -139,14 +159,21 @@ jobs:
           # job failed the first time it ran -- the release had been published
           # by hand while Actions was still disabled on the fork.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $TAG exists; replacing its assets."
+            echo "Release $TAG exists; replacing its assets and notes."
             gh release upload "$TAG" firmware*.bin \
               --repo "$GITHUB_REPOSITORY" --clobber
+            # Also refresh the body: re-running this workflow after fixing a
+            # changelog entry is the only way to correct a release that already
+            # shipped, and uploading assets alone would silently leave the old
+            # text in place.
+            if [ -s release-notes.md ]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file release-notes.md
+            fi
           else
             gh release create "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$TAG" \
-              --generate-notes \
+              $notes_args \
               $prerelease \
               firmware*.bin
           fi
