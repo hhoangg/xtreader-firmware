@@ -10,7 +10,7 @@ def svg_to_png_bytes(svg_path, width, height):
 
     with open(svg_path, 'rb') as f:
         svg_data = f.read()
-    png_bytes = cairosvg.svg2png(bytestring=svg_data, output_width=width, output_height=height)
+    png_bytes = cairosvg.svg2png(bytestring=svg_data, output_width=width, output_height=height, background_color='white')
     return png_bytes
 
 def load_image(path, width, height):
