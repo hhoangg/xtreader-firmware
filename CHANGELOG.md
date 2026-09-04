@@ -60,6 +60,10 @@ dropped.
 
 ### Fixed
 
+- **A queued book no longer says it is downloading.** Queue several at once and
+  the file browser labelled every one of them "Downloading", including the ones
+  that had not started. Only the book actually being fetched says that now; the
+  rest say where they are in the queue.
 - **Home's book list no longer reshuffles on every boot.** With more than five
   books waiting on the server, each sync re-discovered the ones the previous
   sync had pushed out, put them back at the top, and pushed out the current
@@ -80,6 +84,10 @@ dropped.
 - Six commits merged from upstream CrossPoint.
 - The library sync runs on its own FreeRTOS task rather than on the render
   task, which is what makes the screen usable while it runs.
+- The library sync and the book-download queue now refuse to run at the same
+  time. Each opens a TLS session, and two at once is more than this device's
+  free heap can hold -- the download queue has always been strictly sequential
+  for exactly that reason, and the background sync had to join the same rule.
 - Every row this fork had inserted into CrossPoint's Settings screen has been
   moved out of it, so that file now merges from upstream without a hand
   resolution.
