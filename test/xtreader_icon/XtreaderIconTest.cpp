@@ -48,8 +48,9 @@ TEST(XtreaderIcon, CornersAreBlank) {
 // Catches both failure modes a bad conversion produces: an empty bitmap (the
 // SVG failed to rasterize and every bit stayed set) and a solid slab (the
 // background was included, or the threshold inverted). The reference render of
-// logo-mark.svg at 32x32 is ~24% ink; the band is wide enough that antialiasing
-// differences between cairo versions cannot trip it.
+// logo-mark.svg at 32x32 is ~25% ink, and the other four nav icons sit between
+// 14% and 28%, so the band is wide enough that antialiasing differences between
+// cairo versions cannot trip it.
 TEST(XtreaderIcon, InkCoverageIsInRange) {
   const int ink = inkCount();
   const int total = ICON_SIZE * ICON_SIZE;

@@ -137,15 +137,27 @@ def assert_activity(device: DeviceTestConsole, expected: str, context: str) -> N
 
 def select_by_label(device: DeviceTestConsole, wanted_label: str, max_steps: int = SELECT_MAX_STEPS_DEFAULT) -> None:
     """Reads the currently highlighted row/icon's label via CMD:SELECTED and
-    presses NAVNEXT until it matches `wanted_label`, then CONFIRMs exactly
+    steps the selection until it matches `wanted_label`, then CONFIRMs exactly
     once. See the module docstring for why this replaced both a hardcoded
     row index and a CONFIRM-and-back-out probe.
+
+    Steps with NAVNEXT, and falls back to RIGHT when NAVNEXT stops moving.
+    That fallback is not defensive padding -- it is required on Home. Once the
+    selector reaches the icon nav strip, HomeActivity::loop() rebinds movement
+    to the physical Down/Up/Right/Left buttons and unbinds the logical
+    NavNext/NavPrevious (see the "On the strip the front pair drives the same
+    cycle horizontally" comment there), because on the strip the front pair
+    walks it horizontally and binding both would double-step. CMD:PRESS
+    injects a MappedInputManager::Button directly, so NAVNEXT simply goes
+    inert on the strip and the cursor parks on the first icon forever.
 
     A selection with no text label (event["selected"] == "", e.g. one of
     Home's recent-book cover tiles) is skipped, not treated as a mismatch
     worth stopping on -- it's a legitimate state CMD:SELECTED reports, not
     an error."""
     seen: list[str] = []
+    step_button = "NAVNEXT"
+    last_index: int | None = None
     for _ in range(max_steps):
         event = device.selected()
         if not event.get("supported"):
@@ -159,10 +171,17 @@ def select_by_label(device: DeviceTestConsole, wanted_label: str, max_steps: int
             device.press("CONFIRM")
             time.sleep(RENDER_SETTLE_S)
             return
-        device.press("NAVNEXT")
+        index = event.get("index")
+        if step_button == "NAVNEXT" and index is not None and index == last_index:
+            # The previous press moved nothing: we have walked onto Home's nav
+            # strip, where NAVNEXT is unbound. Switch for the rest of the walk.
+            step_button = "RIGHT"
+        last_index = index
+        device.press(step_button)
         time.sleep(RENDER_SETTLE_S)
     raise DeviceTestError(
-        f"select_by_label: {wanted_label!r} not found within {max_steps} steps. Labels seen: {seen}"
+        f"select_by_label: {wanted_label!r} not found within {max_steps} steps "
+        f"(last step button {step_button}). Labels seen: {seen}"
     )
 
 

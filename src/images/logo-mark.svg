@@ -1,3 +1,20 @@
-<svg width="162" height="180" viewBox="0 0 162 180" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path d="M121.275 117.524L92.3848 134.864L147.281 167.811C148.277 168.408 149.542 167.685 149.545 166.526V100.567L121.275 117.524ZM14.2393 12.1897C13.2438 11.5924 11.979 12.3152 11.9756 13.4749V86.6125L74.7725 124.29V48.51L14.2393 12.1897Z" fill="black"/>
+<!-- The xtreader X, taken from the web app's apps/web/public/favicon.svg.
+     Three differences from that file, all forced by the panel:
+       1. stroke is black, not #f97316. The X4 is 1bpp; the orange's luminance
+          is ~144, above convert_icon.py's 128 threshold, so it would rasterise
+          to blank white paper.
+       2. viewBox is cropped to the artwork (which spans 140..372 plus a
+          24-unit stroke half-width) so the mark fills a 32x32 icon cell
+          instead of sitting letterboxed in the middle of it.
+       3. stroke-width 48 rather than 56, so the 32x32 render lands at ~25%
+          ink, inside the 14-28% band the other four nav icons occupy.
+     Do not use src/images/logo.svg for this: that is the filled bookmark body
+     with this X carved out of it, and converting it puts a solid block on the
+     nav strip. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="79 79 354 354" width="354" height="354" role="img" aria-label="xtreader">
+  <g fill="none" stroke="#000000" stroke-width="48" stroke-linecap="round">
+    <path d="M 140 372 L 210 302"/>
+    <path d="M 302 210 L 372 140"/>
+    <path d="M 140 140 C 220 140, 292 372, 372 372"/>
+  </g>
 </svg>
