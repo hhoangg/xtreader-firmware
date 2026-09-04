@@ -6,6 +6,7 @@
 #include <FsHelpers.h>
 #include <GfxRenderer.h>
 #include <HalDisplay.h>
+#include <HalPowerManager.h>
 #include <HalStorage.h>
 #include <I18n.h>
 #include <Logging.h>
@@ -403,6 +404,84 @@ void drawNavBar(const GfxRenderer& renderer, fui::GfxRendererTarget& target, con
     drawNavIcon(renderer, navIconBits(i), cellX + (cellW - NAV_ICON_SIZE) / 2, slotY + (slotH - NAV_ICON_SIZE) / 2,
                 !isSelected);
   }
+}
+
+// The sync status, level with the battery, Home only: Task 3 put this string
+// in BaseTheme::drawHeader()'s shared subtitle slot, but that slot renders a
+// line below the battery on Lyra and is also how Settings/Xtreader place
+// their own titles -- widening its meaning would reach beyond Home. Drawn
+// here instead, over an already-rendered header, as an opaque box (so it can
+// cover a homeContinueReadingInMenu title already sitting in that spot).
+//
+// The battery reserve geometry below mirrors BaseTheme::drawHeader()
+// (BaseTheme.cpp:296-309, 370-372) exactly, since that math is local to the
+// function and not exposed as tokens -- this box's right edge has to agree
+// with where the battery actually lands on every theme, not just Lyra.
+void drawSyncStatusBanner(const GfxRenderer& renderer, const Rect& band, const char* status) {
+  if (status == nullptr) return;
+  const ThemeMetrics& metrics = UITheme::getInstance().getMetrics();
+
+  const auto spec = uiScaleSpec();
+  fui::GfxRendererFrame<1> ui(renderer, spec.smallFontId, spec.bodyFontId, spec.titleFontId);
+  const fui::ThemeTokens& tokens = refreshSharedUiThemeTokens(ui.target);
+  // Header status text stays at the fixed small font, like BaseTheme::drawHeader
+  // itself (BaseTheme.cpp:291) -- the uiScale small font is for list subtitles.
+  ui.target.setFont(fui::GfxRendererTarget::FONT_SMALL, SMALL_FONT_ID);
+
+  const bool showBatteryPercentage =
+      SETTINGS.hideBatteryPercentage != CrossPointSettings::HIDE_BATTERY_PERCENTAGE::HIDE_ALWAYS;
+  const uint16_t percentage = powerManager.getBatteryPercentage();
+  char percentText[8];
+  snprintf(percentText, sizeof(percentText), "%u%%", static_cast<unsigned>(percentage));
+  constexpr int16_t batteryNubWidth = 2;
+  int16_t batteryReserve = static_cast<int16_t>(metrics.batteryWidth + batteryNubWidth);
+  if (showBatteryPercentage) {
+    batteryReserve = static_cast<int16_t>(
+        batteryReserve + BaseTheme::batteryPercentSpacing +
+        ui.target.measureText(fui::GfxRendererTarget::FONT_SMALL, percentText, tokens.smallText).width);
+  }
+  // BaseTheme.cpp:370's detached-corner inset (12px, "the legacy inset") --
+  // duplicated here because it is a plain local literal there, not a token.
+  constexpr int16_t detachedBatteryEdgeInset = 12;
+  const int16_t batteryEdgeInset =
+      metrics.headerBatteryDetached ? detachedBatteryEdgeInset : static_cast<int16_t>(tokens.headerSidePadding);
+  const int16_t bandRight = static_cast<int16_t>(band.x + band.width);
+  const int16_t batteryX = static_cast<int16_t>(bandRight - batteryEdgeInset - batteryReserve);
+
+  fui::TextStyle style = tokens.smallText;
+  style.align = fui::TextAlign::Left;
+  const fui::Size textSize = ui.target.measureText(fui::GfxRendererTarget::FONT_SMALL, status, style);
+
+  // Left inset matches the header's own side padding, so the box's left edge
+  // lines up with where a title would otherwise start.
+  const int16_t leftInset = tokens.headerSidePadding;
+  const int16_t gapBeforeBattery = tokens.spaceMd;
+  const int16_t availableWidth = static_cast<int16_t>(batteryX - gapBeforeBattery - (band.x + leftInset));
+  if (availableWidth <= 0) return;  // Battery reserve already fills the band; nothing sensible to draw.
+
+  const int16_t padding = tokens.spaceSm;
+  // "Connecting to saved Wi-Fi..." (the longer of the two strings, 211px at
+  // SMALL_FONT_ID) measures comfortably under availableWidth on every current
+  // theme (see task-5-report.md for the numbers) -- but the box still clips
+  // to availableWidth rather than trusting that headroom, so a future theme
+  // with a narrower band or wider battery reserve degrades into ellipsized
+  // text() truncation (FreeInkUIGfxRenderer.h's text()) instead of overlapping
+  // the battery.
+  const int16_t boxWidth = std::min<int16_t>(static_cast<int16_t>(textSize.width + padding * 2), availableWidth);
+  const int16_t boxHeight =
+      std::min<int16_t>(static_cast<int16_t>(textSize.height + padding * 2), static_cast<int16_t>(band.height));
+  // The battery glyph/label sit vertically centered within a
+  // Rect{band.y, ..., batteryBarHeight} strip on every theme (BaseTheme.cpp:374)
+  // -- center this box on that same strip so both read as one line.
+  const int16_t batteryLineHeight =
+      std::min<int16_t>(static_cast<int16_t>(metrics.batteryBarHeight), static_cast<int16_t>(band.height));
+  const int16_t boxY = static_cast<int16_t>(band.y + (batteryLineHeight - boxHeight) / 2);
+  const fui::Rect box{static_cast<int16_t>(band.x + leftInset), boxY, boxWidth, boxHeight};
+
+  ui.target.fill(box, fui::Paint::solid(fui::Color::White));
+  ui.target.text(fui::Rect{static_cast<int16_t>(box.x + padding), box.y,
+                           static_cast<int16_t>(std::max<int16_t>(0, box.width - padding * 2)), box.height},
+                 status, style);
 }
 }  // namespace
 
@@ -1036,9 +1115,15 @@ void HomeActivity::render(RenderLock&&) {
   // Band spans topPadding..homeTopPadding: the cover tile starts at the fixed
   // homeTopPadding, so the height must shrink by topPadding or the band (and a
   // centered title, e.g. RoundedRaff's book title) sinks into the tile.
-  GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding - metrics.topPadding},
+  const Rect headerBand{0, metrics.topPadding, pageWidth, metrics.homeTopPadding - metrics.topPadding};
+  GUI.drawHeader(renderer, headerBand,
                  metrics.homeContinueReadingInMenu && !tileBooks.empty() ? tileBooks[0].title.c_str() : nullptr,
-                 syncSubtitle);
+                 nullptr);
+
+  // Level with the battery, Home only -- BaseTheme::drawHeader()'s shared
+  // subtitle slot is the wrong mechanism (see drawSyncStatusBanner above), so
+  // this draws directly over the header band it just rendered.
+  drawSyncStatusBanner(renderer, headerBand, syncSubtitle);
 
   // Record the tile rect so storeCoverBuffer (called from the theme) knows
   // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
