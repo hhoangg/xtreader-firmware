@@ -105,6 +105,16 @@ class Worker {
     taskHandle_ = nullptr;
   }
 
+  // Matches HomeActivity.cpp's original, unconditional
+  // `heartbeatWallpaperRevision = heartbeatResult.wallpaperRevision;` -- not
+  // gated on heartbeatResult.ok, because TelemetryResult::wallpaperRevision
+  // is already 0 on any failure (absent field, transport error, or HTTP
+  // error), which is exactly the "leave the wallpaper cadence to it" value.
+  void setWallpaperRevision(uint32_t revision) {
+    Lock lock(mutex_);
+    status_.wallpaperRevision = revision;
+  }
+
   // sleep_progress_sync::saveWifiBackoffState() can write CrossPointState to
   // SD (CrossPointState::saveToFile()), which shares the SD card's SPI bus
   // with the display. HomeActivity's original call site never needed this
@@ -218,6 +228,10 @@ class Worker {
       LOG_DBG("LIBSYNC", "Heartbeat piggybacked on library sync failed (error=%s status=%d) -- diagnostics only",
               heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
     }
+    // The one thing the heartbeat brings back that changes behaviour: how
+    // trySyncWallpapers() learns the assigned set was edited without waiting
+    // out the boot cadence -- see Status::wallpaperRevision's comment.
+    setWallpaperRevision(heartbeatResult.wallpaperRevision);
 
     LOG_DBG("LIBSYNC", "Worker stack high water: %u bytes",
             (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));

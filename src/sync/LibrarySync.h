@@ -39,6 +39,13 @@ struct Status {
   uint32_t generation = 0;  // bumped under the same lock as phase, on every phase change
   bool lastSyncOk = false;
   bool lastSyncRan = false;  // a sync completed since boot
+  // The opaque wallpaper-set fingerprint the piggybacked heartbeat came back
+  // with (0 = none, see telemetry::TelemetryResult::wallpaperRevision).
+  // HomeActivity's trySyncWallpapers() compares it for equality against
+  // APP_STATE.lastSyncedWallpaperRevision; it is never parsed. Carried here
+  // because the heartbeat now runs on this task, and a cross-task write to
+  // HomeActivity's old file-static would be a data race.
+  uint32_t wallpaperRevision = 0;
 };
 
 // Checked by start() before it creates the worker task -- return false to
