@@ -125,9 +125,9 @@ class HomeActivity final : public Activity {
   // Which book row the selector is on, or -1 when it is on the tile or the
   // nav strip.
   int slotSelectionIndex() const;
-  // Which of the four nav icons the selector is on, or -1 when it is still on
+  // Which of the five nav icons the selector is on, or -1 when it is still on
   // the tile or a book row. The selector runs tile -> rows -> nav strip, so
-  // the four icons are always the last four positions.
+  // the five icons are always the last five positions.
   int navSelectionIndex() const;
   // Runs the row's one action: an undownloaded or failed book is enqueued, a
   // local one is opened, and a book already in the queue does nothing.

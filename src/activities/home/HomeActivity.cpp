@@ -444,7 +444,7 @@ int HomeActivity::slotRowCount() const {
 }
 
 int HomeActivity::getMenuItemCount() const {
-  // Cover tile, then one position per book row, then the four nav icons.
+  // Cover tile, then one position per book row, then the five nav icons.
   return coverSelectionCount() + slotRowCount() + static_cast<int>(NAV_ITEM_COUNT);
 }
 
@@ -956,7 +956,7 @@ void HomeActivity::loop() {
   }
 
   // The band's own geometry, from the same helper drawSlotBand() lays out
-  // with: three stacked book rows, then four equal nav cells along the strip.
+  // with: three stacked book rows, then five equal nav cells along the strip.
   // Nothing below recomputes a length of its own, so a tap cannot land
   // somewhere other than what was drawn.
   const SlotBandLayout band = slotBandLayout();
