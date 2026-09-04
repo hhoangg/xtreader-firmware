@@ -406,16 +406,42 @@ void setupDisplayAndFonts(bool seamless = false) {
   LOG_DBG("MAIN", "Fonts setup");
 }
 
-// Shared SafetyCheck for download_queue and library_sync: enforces "sync
-// from the library screen, never with a book open" (docs/API.md's measured
-// heap numbers -- a TLS session costs ~9 KB, comfortable against the ~137 KB
-// free on the library screen, risky against the ~50 KB a reading session
-// leaves) from the one place that actually knows what activity is current,
-// so each worker task pauses itself rather than every future caller having
-// to remember to check. Plain function pointer (see CLAUDE.md's "Template
-// and std::function Bloat"), matching both modules' identical SafetyCheck
-// signature.
-static bool backgroundSyncSafetyCheck() { return !activityManager.isReaderActivity(); }
+// Both SafetyChecks below enforce "sync from the library screen, never with
+// a book open" (docs/API.md's measured heap numbers -- a TLS session costs
+// ~9 KB, comfortable against the ~137 KB free on the library screen, risky
+// against the ~50 KB a reading session leaves) from the one place that
+// actually knows what activity is current, plus a second gate against each
+// other: DownloadQueue.h's design rule is never two TLS sessions at once,
+// and library_sync now opens one of its own, so each module must also
+// refuse while the other is using the radio. Plain function pointers (see
+// CLAUDE.md's "Template and std::function Bloat"), matching each module's
+// SafetyCheck signature.
+
+// Checked by download_queue before starting or resuming the front item --
+// refuses while library_sync is mid-run (Wi-Fi bring-up or manifest fetch).
+// A false return only pauses the queue (see DownloadQueue.h's SafetyCheck
+// contract): the item stays Pending and the worker rechecks after
+// WORKER_IDLE_DELAY, so this can only delay a queued download, never lose
+// or cancel it.
+static bool downloadQueueSafetyCheck() {
+  return !activityManager.isReaderActivity() && library_sync::status().phase == library_sync::Phase::Idle;
+}
+
+// Checked by library_sync::start() before it creates the worker task --
+// refuses while download_queue has anything queued or downloading.
+// dq.count == 0 covers the common case; dq.workerRunning is also checked
+// for the window right after cancelAll() empties the queue (count already
+// 0) but before the worker's current HTTP chunk actually returns and it
+// notices the cancel -- a TLS session can still be closing there even
+// though the queue looks empty. A false return here is cheap: start() is
+// re-called on every HomeActivity repaint (see LibrarySync.h), and nothing
+// this consumes is a once-per-boot latch -- those are only set inside
+// run(), which never begins until start() has already succeeded.
+static bool librarySyncSafetyCheck() {
+  if (activityManager.isReaderActivity()) return false;
+  const download_queue::Snapshot dq = download_queue::snapshot();
+  return dq.count == 0 && !dq.workerRunning;
+}
 
 void setup() {
   BoardConfig::holdPowerRails();
@@ -505,8 +531,8 @@ void setup() {
   // NVS, not the SD card (see SyncCredentialStore.h) -- no SPI/RenderLock
   // dance needed, so it can load unconditionally at boot like the others.
   SYNC_STORE.load();
-  download_queue::setSafetyCheck(&backgroundSyncSafetyCheck);
-  library_sync::setSafetyCheck(&backgroundSyncSafetyCheck);
+  download_queue::setSafetyCheck(&downloadQueueSafetyCheck);
+  library_sync::setSafetyCheck(&librarySyncSafetyCheck);
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 
