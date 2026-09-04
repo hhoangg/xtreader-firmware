@@ -1,16 +1,16 @@
 """
 Device pairing (QR login) scenario for the CP_TEST_CONSOLE serial harness.
 
-Drives the on-device menu from Home into Settings > System > Account Sync. If
-the hub offers "Pair Device", runs the pairing flow: confirms
+Drives the on-device menu from Home into XtreaderActivity's Account tab. If
+the tab offers "Pair Device", runs the pairing flow: confirms
 SyncPairingActivity is on screen, captures a screenshot of the QR code, and
 reports free heap bracketed around the Wi-Fi-plus-TLS episode that fetches
 the pairing code (POST /device/code) -- the same before/after-a-network-op
 pattern test_https.py uses for CMD:HTTPGET, applied here to the real pairing
 flow instead of a synthetic probe.
 
-If the hub instead offers "Unlink Device", the device is already paired.
-This scenario verifies and reports that (the hub rows are enough evidence)
+If the tab instead offers "Unlink Device", the device is already paired.
+This scenario verifies and reports that (the tab's rows are enough evidence)
 and skips the rest cleanly -- it never unlinks a working pairing just to
 force a clean run every time; see the branch in run() for why.
 
@@ -29,7 +29,7 @@ Two things this script cannot do, both noted where they matter below:
 
 List/menu navigation uses NAVNEXT/NAVPREV, never UP/DOWN/LEFT/RIGHT. Every
 list on this firmware -- Home's icon row, Settings and its tabs, this
-feature's own SyncSettingsActivity hub -- moves its selection through
+feature's own XtreaderActivity tab band -- moves its selection through
 ButtonNavigator, which is wired to the logical NavNext/NavPrevious buttons
 (src/util/ButtonNavigator.h), not the physical direction buttons. On real
 hardware, Up/Down/Left/Right *resolve into* NavNext/NavPrevious via the
@@ -63,11 +63,11 @@ reports the *label* of whatever is currently highlighted without acting on
 it. select_by_label() below just reads that label and presses NAVNEXT until
 it matches, then CONFIRMs exactly once -- no mutation, no side effects, no
 row counting, immune to menu reordering and to configuration-dependent rows.
-Implemented for HomeActivity, SettingsActivity, and SyncSettingsActivity (the
-three screens this flow touches); other UiListActivity subclasses don't have
+Implemented for HomeActivity, SettingsActivity, and XtreaderActivity (the
+screens this flow touches); other UiListActivity subclasses don't have
 it yet.
 
-Matching is on the English label text (e.g. "Settings", "Account Sync",
+Matching is on the English label text (e.g. "Xtreader",
 "Pair Device"), since that's what CMD:SELECTED reports back verbatim from
 I18N -- this assumes the device's UI language is English. A device left in
 another language will fail select_by_label() with a clear "not found, saw
@@ -92,30 +92,9 @@ RENDER_SETTLE_S = 1.0
 MAX_BACK_TO_HOME_PRESSES = 8
 
 # Default bound for select_by_label()'s search -- comfortably more than
-# Home's menu (4 base icons, plus however many recent-book cover tiles
-# precede them) or the SyncSettingsActivity hub
-# (3 fixed rows) will ever have.
+# Home's menu (5 base icons, plus however many recent-book cover tiles
+# precede them) will ever have.
 SELECT_MAX_STEPS_DEFAULT = 12
-
-# Settings > System currently has up to 11 rows (Time to Sleep, Show Hidden
-# Files, Remove Read from Recents, Move Finished to Read, Wi-Fi Networks,
-# KOReader Sync, Account Sync, Clear Reading Cache, Check for
-# Updates, SD Firmware Update, Language -- see SettingsList.h /
-# SettingsActivity.cpp::rebuildSettingsLists()); this only needs to be a
-# generous upper bound, not exact.
-SELECT_MAX_STEPS_SETTINGS_SYSTEM = 16
-
-# SettingsActivity opens on the Display tab with the tab band focused (ring
-# position 0). CONFIRM there cycles to the next category
-# (Display -> Reader -> Controls -> System); three presses land on System
-# with the tab band still focused. See SettingsActivity::handleButtons().
-# Unlike row order within a category, category order is a fixed enum
-# (SettingsActivity::categoryNames), not reordered by device configuration,
-# so a fixed press count is safe here -- and CMD:SELECTED confirms it: at
-# ring 0 it reports the active tab's own label, so a script could check
-# "System" was actually reached, though this scenario doesn't bother since
-# the category enum order is compiled in, not owner-configurable.
-SETTINGS_CATEGORY_CYCLE_PRESSES = 3
 
 PAIRING_ACTIVITY_NAME = "SyncPairing"
 CODE_REQUEST_TIMEOUT_S = 45.0  # Wi-Fi auto-connect + POST /device/code
@@ -187,38 +166,30 @@ def select_by_label(device: DeviceTestConsole, wanted_label: str, max_steps: int
     )
 
 
-# SyncSettingsActivity::MENU_ITEMS: Server URL, Status, then the Pair/Unlink
-# action -- fixed and owned by this feature, unlike Settings > System, so a
-# hardcoded row count here is not the fragility the module docstring warns
-# about elsewhere.
+# XtreaderActivity's Account tab: Server URL, Pairing status, then the
+# Pair/Unlink action -- fixed and owned by this feature, unlike Settings >
+# System, so a hardcoded row count here is not the fragility the module
+# docstring warns about elsewhere.
 HUB_ROW_COUNT = 3
 
 
 def navigate_to_sync_hub(device: DeviceTestConsole) -> None:
-    """Home -> Settings -> System -> Account Sync. Leaves the cursor on the
-    hub's first row (Server URL) -- what to do next is the caller's call,
-    made by reading the hub's own rows (see scan_hub_rows()) rather than
-    assumed here, since whether the device already has a pairing changes
-    what those rows are."""
-    select_by_label(device, "Settings")
-    assert_activity(device, "Settings", "Home -> Settings navigation")
+    """Home -> Xtreader -> Account tab. Leaves the cursor on the tab's first
+    row (Server URL) -- what to do next is the caller's call, made by reading
+    the tab's own rows (see scan_hub_rows()) rather than assumed here, since
+    whether the device already has a pairing changes what those rows are."""
+    select_by_label(device, "Xtreader")
+    assert_activity(device, "Xtreader", "Home -> Xtreader navigation")
 
-    for _ in range(SETTINGS_CATEGORY_CYCLE_PRESSES):
-        device.press("CONFIRM")  # ring position 0 (tab band): cycles category, not a row
-        time.sleep(RENDER_SETTLE_S)
-    # Now on the System tab, tab band still focused (ring 0). One NAVNEXT
-    # descends into the first row -- CONFIRM at ring 0 cycles tabs instead of
-    # activating a row, so select_by_label must not start until the cursor
-    # is actually on a row.
+    # The screen opens on the Account tab with the tab band focused (ring 0).
+    # CONFIRM at ring 0 cycles tabs rather than activating a row, so descend
+    # onto the first row before reading anything.
     device.press("NAVNEXT")
     time.sleep(RENDER_SETTLE_S)
 
-    select_by_label(device, "Account Sync", max_steps=SELECT_MAX_STEPS_SETTINGS_SYSTEM)
-    assert_activity(device, "SyncSettings", "Settings -> Account Sync navigation")
-
 
 def scan_hub_rows(device: DeviceTestConsole, count: int = HUB_ROW_COUNT) -> list[str]:
-    """Reads each row's label on the Account Sync hub via CMD:SELECTED, in
+    """Reads each row's label on Xtreader's Account tab via CMD:SELECTED, in
     order, starting from wherever the cursor currently is (row 0 on a fresh
     entry, which is what navigate_to_sync_hub() leaves it at). Read-only --
     advances with NAVNEXT, never CONFIRMs -- so on its own this cannot pair
@@ -268,33 +239,33 @@ def run(device: DeviceTestConsole) -> None:
     print(f"[test_pairing] heap before Wi-Fi + code request: {heap_before}")
 
     navigate_to_sync_hub(device)
-    print("[test_pairing] confirmed activity: SyncSettings")
+    print("[test_pairing] confirmed activity: Xtreader")
 
     hub_rows = scan_hub_rows(device)
-    print(f"[test_pairing] Account Sync hub rows: {hub_rows}")
+    print(f"[test_pairing] Xtreader Account tab rows: {hub_rows}")
 
     # scan_hub_rows() left the cursor on the last row read -- the action row,
-    # third and last of the hub's fixed three. Its label tells us whether
+    # third and last of the tab's fixed three. Its label tells us whether
     # this device is already paired; branch on that rather than assuming.
     action_row = hub_rows[-1] if hub_rows else ""
     if action_row == "Unlink Device":
-        # Already paired. The hub rows are enough evidence -- do not unlink
+        # Already paired. The tab's rows are enough evidence -- do not unlink
         # to force a clean run: that would be the same class of mistake as
         # the toggle-flipping probe this scenario used to do, just aimed at
         # a more consequential row. Verify and skip instead.
         print(
-            "[test_pairing] device is already paired (hub offers 'Unlink Device', not 'Pair Device') -- "
+            "[test_pairing] device is already paired (tab offers 'Unlink Device', not 'Pair Device') -- "
             "skipping the pairing flow rather than unlinking a working pairing to force a clean run"
         )
         device.press("BACK")
         time.sleep(RENDER_SETTLE_S)
         return
     if action_row != "Pair Device":
-        raise DeviceTestError(f"Account Sync hub's action row is neither 'Pair Device' nor 'Unlink Device': {hub_rows}")
+        raise DeviceTestError(f"Xtreader Account tab's action row is neither 'Pair Device' nor 'Unlink Device': {hub_rows}")
 
     device.press("CONFIRM")
     time.sleep(RENDER_SETTLE_S)
-    assert_activity(device, PAIRING_ACTIVITY_NAME, "Account Sync -> Pair Device navigation")
+    assert_activity(device, PAIRING_ACTIVITY_NAME, "Pair Device navigation")
     print(f"[test_pairing] confirmed activity: {PAIRING_ACTIVITY_NAME}")
 
     code_event = wait_for_qr_code(device)

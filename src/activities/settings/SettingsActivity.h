@@ -15,7 +15,6 @@ enum class SettingAction {
   None,
   RemapFrontButtons,
   CustomiseStatusBar,
-  SyncSettings,
   Network,
   ClearCache,
   CheckForUpdates,
@@ -23,7 +22,6 @@ enum class SettingAction {
   Language,
   DownloadFonts,
   TextSettings,
-  WallpaperGallery,
   KeyboardLayouts,
 };
 

@@ -228,7 +228,7 @@ inline std::vector<SettingInfo> getSettingsList(const SdCardFontRegistry* regist
                           {StrId::STR_NONE_OPT, StrId::STR_FILTER_CONTRAST, StrId::STR_INVERTED},
                           "sleepScreenCoverFilter", StrId::STR_CAT_DISPLAY),
         SettingInfo::Toggle(StrId::STR_SLEEP_SYNCED_ONLY, &CrossPointSettings::sleepScreenSyncedOnly,
-                            "sleepScreenSyncedOnly", StrId::STR_CAT_DISPLAY),
+                            "sleepScreenSyncedOnly", StrId::STR_CAT_WALLPAPERS),
         SettingInfo::Enum(StrId::STR_QUICK_RESUME_TIMEOUT, &CrossPointSettings::quickResumeSleepScreen,
                           {StrId::STR_STATE_OFF, StrId::STR_STATE_ON}, "quickResumeSleepScreen",
                           StrId::STR_CAT_DISPLAY),
