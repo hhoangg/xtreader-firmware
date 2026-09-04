@@ -26,6 +26,22 @@ The wallpaper gallery sat under Display, next to sleep-screen settings it is onl
 loosely related to. Both are gone from Settings and live here now, one level
 shallower than before.
 
+### The library sync no longer freezes the reader
+
+Waking the device used to mean staring at a "Syncing library" box for as long
+as it took. Measured on hardware, that was **17 to 22 seconds** -- the whole
+device unresponsive, because the sync ran on the same task that draws the
+screen, so nothing could be drawn and no button could open anything.
+
+The sync now runs in the background. The reader is usable the moment Home
+appears: measured at 69 button presses over 25 seconds during a live sync, with
+no missed input. What was a box in the middle of the screen is now a short line
+of text in the top-left corner, level with the battery, that says what is
+happening and gets out of the way.
+
+The one thing that has not changed is how long the sync itself takes. It is the
+same work over the same network; you just are not held hostage by it.
+
 ### The "continue from another device?" prompt stops crying wolf
 
 Opening a book synced from a Kindle almost always asked whether you wanted to
@@ -44,6 +60,13 @@ dropped.
 
 ### Fixed
 
+- **Home's book list no longer reshuffles on every boot.** With more than five
+  books waiting on the server, each sync re-discovered the ones the previous
+  sync had pushed out, put them back at the top, and pushed out the current
+  set -- so the order was different every time you turned the device on and
+  nothing ever stayed put. The reader now remembers how far through the
+  library it has already looked, so a book it has already shown you does not
+  come back as new.
 - Footnote links are drawn as superscript again.
 - Two Perso-Arabic marks (U+0654, U+06D5) were missing from the interface fonts
   and rendered as blanks.
@@ -55,6 +78,8 @@ dropped.
 ### Under the hood
 
 - Six commits merged from upstream CrossPoint.
+- The library sync runs on its own FreeRTOS task rather than on the render
+  task, which is what makes the screen usable while it runs.
 - Every row this fork had inserted into CrossPoint's Settings screen has been
   moved out of it, so that file now merges from upstream without a hand
   resolution.
