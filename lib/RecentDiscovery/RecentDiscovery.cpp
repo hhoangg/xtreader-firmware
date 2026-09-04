@@ -44,6 +44,16 @@ Result decide(const Input& in) {
     }
   }
 
+  // The mark this call reports back, computed before firstSync's early
+  // return and before maxInsert trims anything: see RecentDiscovery.h for
+  // why it has to cover every book-like record, not just the inserted ones,
+  // and why it can never end up lower than what came in.
+  result.newWatermark = in.discoveredWatermark;
+  for (const ManifestView& record : in.manifest) {
+    if (!record.looksLikeBook) continue;
+    if (record.updatedAt > result.newWatermark) result.newWatermark = record.updatedAt;
+  }
+
   // A freshly paired device must not pull its whole library in as "new" --
   // see RecentDiscovery.h. Discovery starts from the second sync.
   if (in.firstSync) return result;
@@ -52,7 +62,10 @@ Result decide(const Input& in) {
   toInsert.reserve(in.manifest.size());
   for (const ManifestView& record : in.manifest) {
     if (!record.looksLikeBook) continue;
-    if (pathInList(in.current, record.path)) continue;
+    // Novelty is "updated beyond the mark", not "absent from the list" --
+    // see RecentDiscovery.h for why the latter reshuffles forever.
+    if (record.updatedAt <= in.discoveredWatermark) continue;
+    if (pathInList(in.current, record.path)) continue;  // cheap guard against double-insertion
     if (pathInList(in.pathsOnDisk, record.path)) continue;
     toInsert.push_back(record);
   }

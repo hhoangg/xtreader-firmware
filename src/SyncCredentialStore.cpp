@@ -13,6 +13,7 @@ constexpr char KEY_DEVICE_ID[] = "devId";
 constexpr char KEY_DEVICE_NAME[] = "devName";
 constexpr char KEY_ACCOUNT_EMAIL[] = "email";
 constexpr char KEY_MANIFEST_SEEDED[] = "mfSeed";
+constexpr char KEY_DISCOVERED_WATERMARK[] = "dscWm";
 
 // Default CrossPoint Sync server; self-hosters point elsewhere via the
 // "Server URL" setting (see SettingsList.h / SyncSettingsActivity).
@@ -45,6 +46,7 @@ bool SyncCredentialStore::load() {
     deviceName_.clear();
     accountEmail_.clear();
     manifestSeeded_ = false;
+    discoveredWatermark_ = 0;
     return true;
   }
   serverUrl_ = prefs.getString(KEY_SERVER_URL, "").c_str();
@@ -56,6 +58,10 @@ bool SyncCredentialStore::load() {
   // an already-paired reader spends one sync seeding instead of importing its
   // whole library at once -- the safe direction to be wrong in.
   manifestSeeded_ = prefs.getBool(KEY_MANIFEST_SEEDED, false);
+  // Absent (paired by an older firmware, or never synced) reads as 0, which
+  // treats every book-like manifest record as beyond the mark -- correct
+  // for a device that has never run discovery with a mark yet.
+  discoveredWatermark_ = prefs.getULong64(KEY_DISCOVERED_WATERMARK, 0);
   prefs.end();
   LOG_DBG("SYNC", "Loaded sync credentials from NVS (paired=%s)", isPaired() ? "yes" : "no");
   return true;
@@ -95,11 +101,14 @@ bool SyncCredentialStore::setPairing(const std::string& accessToken, const std::
   prefs.putString(KEY_DEVICE_ID, deviceId.c_str());
   prefs.putString(KEY_DEVICE_NAME, deviceName.c_str());
   prefs.putString(KEY_ACCOUNT_EMAIL, accountEmail.c_str());
-  // A new pairing is a new account: its first sync seeds again.
+  // A new pairing is a new account: its first sync seeds again, and its
+  // updatedAt values share no timeline with whatever account paired before.
   prefs.remove(KEY_MANIFEST_SEEDED);
+  prefs.remove(KEY_DISCOVERED_WATERMARK);
   prefs.end();
 
   manifestSeeded_ = false;
+  discoveredWatermark_ = 0;
   accessToken_ = accessToken;
   deviceId_ = deviceId;
   deviceName_ = deviceName;
@@ -120,6 +129,18 @@ void SyncCredentialStore::setManifestSeeded() {
   manifestSeeded_ = true;
 }
 
+void SyncCredentialStore::setDiscoveredWatermark(uint64_t watermark) {
+  if (watermark == discoveredWatermark_) return;  // unchanged -- no NVS write
+  Preferences prefs;
+  if (!prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) {
+    LOG_ERR("SYNC", "Failed to open NVS namespace to save the discovery watermark");
+    return;
+  }
+  prefs.putULong64(KEY_DISCOVERED_WATERMARK, watermark);
+  prefs.end();
+  discoveredWatermark_ = watermark;
+}
+
 void SyncCredentialStore::clearPairing() {
   Preferences prefs;
   if (prefs.begin(NVS_NAMESPACE, /*readOnly=*/false)) {
@@ -130,6 +151,7 @@ void SyncCredentialStore::clearPairing() {
     // Forgotten with the pairing it belongs to, so pairing again starts from
     // a seeding sync rather than importing the new account's whole library.
     prefs.remove(KEY_MANIFEST_SEEDED);
+    prefs.remove(KEY_DISCOVERED_WATERMARK);
     prefs.end();
   }
   accessToken_.clear();
@@ -137,6 +159,7 @@ void SyncCredentialStore::clearPairing() {
   deviceName_.clear();
   accountEmail_.clear();
   manifestSeeded_ = false;
+  discoveredWatermark_ = 0;
   LOG_DBG("SYNC", "Cleared sync pairing");
 }
 
@@ -152,5 +175,6 @@ void SyncCredentialStore::clearAll() {
   deviceName_.clear();
   accountEmail_.clear();
   manifestSeeded_ = false;
+  discoveredWatermark_ = 0;
   LOG_DBG("SYNC", "Cleared all sync credentials (server URL reset to default)");
 }

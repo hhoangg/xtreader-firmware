@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 /**
@@ -67,9 +68,25 @@ class SyncCredentialStore {
   // No-op, and no NVS write, once it is already set.
   void setManifestSeeded();
 
-  // Forgets the pairing (token/deviceId/deviceName/accountEmail, and the
-  // first-sync seed marker above) but keeps the server URL override -- what
-  // "Unlink Device" in Settings does.
+  // --- Discovery watermark -------------------------------------------------
+  // The highest ManifestView::updatedAt recent_discovery::decide() has ever
+  // seen for this pairing, across every book-like manifest record, not just
+  // the ones it inserted (see RecentDiscovery.h). HomeActivity::
+  // runRecentDiscovery() reads this into Input::discoveredWatermark and
+  // persists Result::newWatermark back here. Without it, a record evicted
+  // from the recency list looks "new" again the next sync purely because it
+  // fell off the list -- the reshuffle bug this exists to fix. Kept with the
+  // pairing, like isManifestSeeded() above, and reset with it: a re-pair is a
+  // different library, whose updatedAt values share no timeline with the
+  // last one.
+  uint64_t getDiscoveredWatermark() const { return discoveredWatermark_; }
+
+  // No-op, and no NVS write, if watermark already equals the persisted value.
+  void setDiscoveredWatermark(uint64_t watermark);
+
+  // Forgets the pairing (token/deviceId/deviceName/accountEmail, the
+  // first-sync seed marker, and the discovery watermark above) but keeps the
+  // server URL override -- what "Unlink Device" in Settings does.
   void clearPairing();
 
   // Forgets everything, including the server URL override -- full reset.
@@ -84,6 +101,7 @@ class SyncCredentialStore {
   std::string deviceName_;
   std::string accountEmail_;
   bool manifestSeeded_ = false;
+  uint64_t discoveredWatermark_ = 0;
 };
 
 // Helper macro to access the store, matching WIFI_STORE / KOREADER_STORE.

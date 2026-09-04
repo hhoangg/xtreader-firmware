@@ -1275,6 +1275,10 @@ void HomeActivity::runRecentDiscovery() {
   // "new". The marker lives with the pairing, so unlinking forgets it and a
   // re-pair behaves like a fresh device (SyncCredentialStore.h).
   input.firstSync = !SYNC_STORE.isManifestSeeded();
+  // Novelty is judged against this, not list membership -- see
+  // RecentDiscovery.h. Persisted with the pairing, so it resets exactly when
+  // firstSync above does.
+  input.discoveredWatermark = SYNC_STORE.getDiscoveredWatermark();
 
   const std::vector<RecentBook> books = RECENT_BOOKS.getBooks();
   input.current.reserve(books.size());
@@ -1347,6 +1351,10 @@ void HomeActivity::runRecentDiscovery() {
   // Only once the scan actually completed, so a failed one seeds nothing and
   // the next sync still gets its one quiet pass.
   SYNC_STORE.setManifestSeeded();
+  // No-op, and no NVS write, when the mark has not moved -- setDiscoveredWatermark()
+  // itself guards that, the same way the inserts/drops above already skip
+  // recent.json entirely when there is nothing to change.
+  SYNC_STORE.setDiscoveredWatermark(decision.newWatermark);
 
   LOG_DBG("HOME", "Recent discovery: %u inserted, %u dropped (firstSync=%s)", (unsigned)decision.insertFront.size(),
           (unsigned)decision.dropRemoteIds.size(), input.firstSync ? "yes" : "no");
