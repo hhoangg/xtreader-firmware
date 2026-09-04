@@ -146,26 +146,19 @@ class HomeActivity final : public Activity {
   uint32_t lastPulseGeneration = 0;
   uint32_t lastPulseCompletions = 0;
   // Reacts to the background library_sync worker (src/sync/LibrarySync.h):
-  // repaints on every phase change, and -- only for a completion this
-  // activity actually watched start (see librarySyncRunning) -- runs the
-  // post-sync work trySyncLibrary() used to do inline: merge new discoveries
-  // into the recency list, then rebuild the rows from it. Called from
-  // loop(), which ActivityManager calls with RenderLock not held (see
-  // rebuildSlots()'s own comment), so calling it directly here is safe --
-  // unlike the render-task call site trySyncLibrary() used to be.
+  // repaints on every phase change, and -- exactly once for this boot's one
+  // real sync (see librarySyncCompletionHandled) -- runs the post-sync work
+  // trySyncLibrary() used to do inline: merge new discoveries into the
+  // recency list, then rebuild the rows from it. Called from loop(), which
+  // ActivityManager calls with RenderLock not held (see rebuildSlots()'s own
+  // comment), so calling it directly here is safe -- unlike the render-task
+  // call site trySyncLibrary() used to be.
   void pollLibrarySync();
   // Last library_sync::status().generation this activity acted on, seeded in
-  // onEnter() so entering mid-sync does not replay a completion that
-  // predates it.
+  // onEnter() purely to avoid one redundant requestUpdate() on first poll --
+  // this is NOT what gates the discovery hand-off (see
+  // librarySyncCompletionHandled for why a member cannot do that).
   uint32_t lastLibrarySyncGeneration = 0;
-  // Whether the worker was mid-sync (phase != Idle) as of the last poll.
-  // lastSyncRan/lastSyncOk are sticky: once a real sync attempt sets them,
-  // they hold that outcome across every later no-op start() -- the worker's
-  // own once-per-boot latches turn those into an instant return to Idle
-  // without ever leaving it. Without this flag, pollLibrarySync() would read
-  // those stale fields and replay the discovery scan on every one of those
-  // no-op completions too, not just the one that actually ran.
-  bool librarySyncRunning = false;
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer

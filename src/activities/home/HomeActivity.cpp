@@ -54,6 +54,21 @@ namespace {
 // latches live inside library_sync::Worker now, for the same reason.
 bool wallpaperSyncCheckedThisBoot = false;
 
+// Whether pollLibrarySync() has already run the post-sync work
+// (runRecentDiscovery() + rebuildSlots()) for this boot's one real sync.
+// Namespace-scope for the same reason as wallpaperSyncCheckedThisBoot above,
+// not merely for the usual reason: the reader can navigate away from Home
+// (destroying this HomeActivity -- goHome() calls
+// ActivityManager::replaceActivity()) while the sync is still running and
+// come back after it finished, and a per-instance flag would have no
+// instance that ever witnessed both ends of the running->idle transition.
+// library_sync::Worker::hasWorkToDo() guarantees at most one real sync per
+// boot, so "handled once" is "handled for the boot" -- this never needs to
+// reset before a reboot, and checking lastSyncRan/lastSyncOk directly
+// (rather than watching for a phase transition) is what makes it safe even
+// if an entire sync starts and finishes between two polls.
+bool librarySyncCompletionHandled = false;
+
 // Context for the wallpaper sync's progress callback -- plain pointers, not
 // a capturing lambda (see CLAUDE.md's "Template and std::function Bloat").
 struct WallpaperProgressCtx {
@@ -655,11 +670,10 @@ void HomeActivity::onEnter() {
   lastPulseGeneration = pulse.generation;
   lastPulseCompletions = pulse.completions;
 
-  // Same reasoning, for a sync the worker may have started (or finished)
-  // during a previous visit to Home this boot.
-  const library_sync::Status syncStatus = library_sync::status();
-  lastLibrarySyncGeneration = syncStatus.generation;
-  librarySyncRunning = syncStatus.phase != library_sync::Phase::Idle;
+  // Same reasoning, but only to skip one redundant requestUpdate() on the
+  // first poll -- pollLibrarySync()'s discovery hand-off does not depend on
+  // this seed (see librarySyncCompletionHandled).
+  lastLibrarySyncGeneration = library_sync::status().generation;
 
   // Trigger first update
   requestUpdate();
@@ -733,27 +747,36 @@ void HomeActivity::pollDownloadQueue() {
 
 void HomeActivity::pollLibrarySync() {
   const library_sync::Status status = library_sync::status();
-  if (status.generation == lastLibrarySyncGeneration) return;
-  lastLibrarySyncGeneration = status.generation;
-
-  const bool wasRunning = librarySyncRunning;
-  librarySyncRunning = status.phase != library_sync::Phase::Idle;
-
-  // Only the transition out of a sync this activity actually watched start
-  // counts as "just finished" -- see librarySyncRunning's comment for why
-  // lastSyncRan/lastSyncOk alone cannot tell a real completion from one of
-  // the worker's own instant, once-per-boot-latched no-ops.
-  if (wasRunning && !librarySyncRunning && status.lastSyncRan && status.lastSyncOk) {
-    // onEnter() built slots_ from the recency list as it stood before this
-    // sync, so on the one boot that actually discovers a new book Home would
-    // otherwise show nothing until the reader navigated away and back -- the
-    // exact problem the rows exist to solve. Order matters: this mutates
-    // RECENT_BOOKS, and rebuildSlots() re-reads it right after.
-    runRecentDiscovery();
-    rebuildSlots();  // takes RenderLock itself; loop() holds none to deadlock against
+  if (status.generation != lastLibrarySyncGeneration) {
+    lastLibrarySyncGeneration = status.generation;
+    requestUpdate();
   }
 
-  requestUpdate();
+  // librarySyncCompletionHandled, not a per-instance flag: this activity may
+  // not be the one that started the sync, or even exist yet when it did (the
+  // reader can navigate away from Home and back while it runs -- see that
+  // static's comment). Checking the terminal state directly, rather than
+  // watching for a phase transition, is also what catches a sync that starts
+  // and finishes entirely between two polls. finish() sets phase and
+  // lastSyncRan/lastSyncOk together under one lock, so lastSyncRan is never
+  // observed true while phase != Idle, and library_sync::Worker::
+  // hasWorkToDo() guarantees this boot's status never changes again once it
+  // does -- there is exactly one "just completed" instant to catch, and it
+  // stays caught.
+  if (!librarySyncCompletionHandled && status.phase == library_sync::Phase::Idle && status.lastSyncRan) {
+    librarySyncCompletionHandled = true;
+    if (status.lastSyncOk) {
+      // onEnter() built slots_ from the recency list as it stood before this
+      // sync, so on the one boot that actually discovers a new book Home
+      // would otherwise show nothing until the reader navigated away and
+      // back -- the exact problem the rows exist to solve. Order matters:
+      // this mutates RECENT_BOOKS, and rebuildSlots() re-reads it right
+      // after.
+      runRecentDiscovery();
+      rebuildSlots();  // takes RenderLock itself; loop() holds none to deadlock against
+      requestUpdate();
+    }
+  }
 }
 
 void HomeActivity::showEnqueueRefused(const download_queue::EnqueueOutcome outcome) {
