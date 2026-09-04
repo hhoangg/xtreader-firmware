@@ -33,6 +33,7 @@
 #include "components/icons/recent.h"
 #include "components/icons/settings2.h"
 #include "components/icons/transfer.h"
+#include "components/icons/xtreader.h"
 #include "fontIds.h"
 #include "sync/BookFinishedNotifier.h"
 #include "sync/DownloadQueue.h"
@@ -112,9 +113,10 @@ void onWallpaperSyncProgress(void* ctxPtr, const uint32_t done, const uint32_t t
 
 namespace fui = freeink::ui;
 
-// The nav strip's four destinations, in drawing order -- the same set, and the
-// same order, the Home menu has always used.
-constexpr size_t NAV_ITEM_COUNT = 4;
+// The nav strip's five destinations, in drawing order. Xtreader sits in the
+// middle: it is this fork's own screen, and the middle cell is the one a thumb
+// reaches without looking.
+constexpr size_t NAV_ITEM_COUNT = 5;
 // Intrinsic size of the legacy menu icon assets (components/icons/folder.h and
 // friends). Not a layout choice: they exist at exactly this size.
 constexpr int NAV_ICON_SIZE = 32;
@@ -146,6 +148,8 @@ const char* navLabel(const size_t index) {
     case 1:
       return tr(STR_MENU_RECENT_BOOKS);
     case 2:
+      return tr(STR_XTREADER);
+    case 3:
       return tr(STR_FILE_TRANSFER);
     default:
       return tr(STR_SETTINGS_TITLE);
@@ -159,6 +163,8 @@ const uint8_t* navIconBits(const size_t index) {
     case 1:
       return RecentIcon;
     case 2:
+      return XtreaderIcon;
+    case 3:
       return TransferIcon;
     default:
       return Settings2Icon;
@@ -845,6 +851,9 @@ void HomeActivity::loop() {
       case HomeMenuItem::RECENTS:
         onRecentsOpen();
         break;
+      case HomeMenuItem::XTREADER:
+        onXtreaderOpen();
+        break;
       case HomeMenuItem::FILE_TRANSFER:
         onFileTransferOpen();
         break;
@@ -1462,6 +1471,8 @@ void HomeActivity::onSelectBook(const std::string& path) { activityManager.goToR
 void HomeActivity::onFileBrowserOpen() { activityManager.goToFileBrowser(); }
 
 void HomeActivity::onRecentsOpen() { activityManager.goToRecentBooks(); }
+
+void HomeActivity::onXtreaderOpen() { activityManager.goToXtreader(); }
 
 void HomeActivity::onSettingsOpen() { activityManager.goToSettings(); }
 

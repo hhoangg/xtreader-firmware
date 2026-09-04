@@ -51,10 +51,12 @@ class HomeActivity final : public Activity {
         return 0;
       case HomeMenuItem::RECENTS:
         return 1;
-      case HomeMenuItem::FILE_TRANSFER:
+      case HomeMenuItem::XTREADER:
         return 2;
-      case HomeMenuItem::SETTINGS_MENU:
+      case HomeMenuItem::FILE_TRANSFER:
         return 3;
+      case HomeMenuItem::SETTINGS_MENU:
+        return 4;
       default:
         return 0;
     }
@@ -68,8 +70,10 @@ class HomeActivity final : public Activity {
       case 1:
         return HomeMenuItem::RECENTS;
       case 2:
-        return HomeMenuItem::FILE_TRANSFER;
+        return HomeMenuItem::XTREADER;
       case 3:
+        return HomeMenuItem::FILE_TRANSFER;
+      case 4:
         return HomeMenuItem::SETTINGS_MENU;
       default:
         return HomeMenuItem::NONE;
@@ -78,6 +82,7 @@ class HomeActivity final : public Activity {
   void onSelectBook(const std::string& path);
   void onFileBrowserOpen();
   void onRecentsOpen();
+  void onXtreaderOpen();
   void onSettingsOpen();
   void onFileTransferOpen();
 

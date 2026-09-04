@@ -22,7 +22,7 @@ namespace SyncedPositionMarker {
 struct Receipt;
 }
 
-enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, FILE_TRANSFER, SETTINGS_MENU };
+enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, XTREADER, FILE_TRANSFER, SETTINGS_MENU };
 
 /**
  * ActivityManager
@@ -89,6 +89,7 @@ class ActivityManager {
   void goToFileTransfer();
   void goToUsbDrive();
   void goToSettings();
+  void goToXtreader();
   void goToFileBrowser(std::string path = {});
   void goToRecentBooks();
   void goToReader(std::string path, bool allowFastInitialRefresh = false);
