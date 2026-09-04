@@ -1,5 +1,7 @@
 #pragma once
 
+#include <HomeBookSlots.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -129,9 +131,12 @@ class FileBrowserActivity final : public UiListActivity {
   // lets it re-look-up the full ManifestIndexRecord (size, contentHash, ...) via
   // sync_manifest::findById() instead of this class holding one per placeholder row.
   void requestBookDownload(const std::string& remoteId);
-  // Whether a placeholder's book is queued or downloading, tested against a snapshot the
-  // caller already took -- see rebuildRowItems() for why it is not taken per row.
-  static bool isQueued(const download_queue::Snapshot& snap, const std::string& remoteId);
+  // Reshapes a download_queue::Snapshot into the QueueView home_book_slots::remoteState()
+  // reads -- the same reshape HomeActivity::rebuildSlots() and RecentBooksActivity::
+  // buildQueueView() do. Built once per rebuildRowItems() call, not once per row: a
+  // home_book_slots::QueueView owns a std::vector, so building it inside the per-row loop
+  // would allocate on every placeholder row instead of once for the whole rebuild.
+  static home_book_slots::QueueView toQueueView(const download_queue::Snapshot& snap);
   size_t findEntry(const std::string& name) const;
 
  public:

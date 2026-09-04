@@ -163,6 +163,9 @@ void FileBrowserActivity::rebuildRowItems() {
   // One snapshot for the whole rebuild: it copies a fixed array of QueueItem (each holding
   // std::strings) under the queue mutex, so taking it per row would allocate on every row.
   const download_queue::Snapshot queueSnap = download_queue::snapshot();
+  // Same reasoning for the QueueView reshape below it: built once here, not once per
+  // placeholder row (see toQueueView()'s own comment).
+  const home_book_slots::QueueView queueView = toQueueView(queueSnap);
   for (size_t i = 0; i < files.size(); i++) {
     rowNames[i] = getFileName(files[i]);
     // A placeholder row (fileRemoteId[i] non-empty) shows a download status in the same value slot
@@ -180,9 +183,26 @@ void FileBrowserActivity::rebuildRowItems() {
     // screens that have a full line to spare (FontDownloadActivity) and must stay at their
     // natural length, while this value slot is narrow and sits beside a wrapping title.
     // tr() pastes StrId:: onto its argument, so the choice has to happen outside the macro.
-    rowValues[i] = placeholder
-                       ? (isQueued(queueSnap, fileRemoteId[i]) ? tr(STR_BOOK_DOWNLOADING) : tr(STR_BOOK_ON_SERVER))
-                       : getFileExtension(files[i]);
+    if (placeholder) {
+      int queuePosition = 0;
+      const home_book_slots::State state = home_book_slots::remoteState(fileRemoteId[i], queueView, queuePosition);
+      char status[48];
+      // Downloading is the front item only; everything else queued reuses Home's own "Waiting -
+      // N in queue" wording (RecentBooksActivity already does the same) rather than the blanket
+      // STR_BOOK_DOWNLOADING every queued row used to show regardless of position.
+      if (state == home_book_slots::State::Downloading) {
+        snprintf(status, sizeof(status), "%s", tr(STR_BOOK_DOWNLOADING));
+      } else if (state == home_book_slots::State::Queued && queuePosition > 0) {
+        snprintf(status, sizeof(status), tr(STR_HOME_QUEUE_POSITION), queuePosition);
+      } else if (state == home_book_slots::State::Queued) {
+        snprintf(status, sizeof(status), "%s", tr(STR_HOME_QUEUED));
+      } else {
+        snprintf(status, sizeof(status), "%s", tr(STR_BOOK_ON_SERVER));
+      }
+      rowValues[i] = status;
+    } else {
+      rowValues[i] = getFileExtension(files[i]);
+    }
 
     fui::ListItem item;
     item.label = rowNames[i].c_str();
@@ -474,12 +494,21 @@ void FileBrowserActivity::requestBookDownload(const std::string& remoteId) {
   // download finishes.
 }
 
-bool FileBrowserActivity::isQueued(const download_queue::Snapshot& snap, const std::string& remoteId) {
-  if (remoteId.empty()) return false;
+home_book_slots::QueueView FileBrowserActivity::toQueueView(const download_queue::Snapshot& snap) {
+  // Same Snapshot -> QueueView reshape HomeActivity::rebuildSlots() and
+  // RecentBooksActivity::buildQueueView() do. lastFailedId is deliberately left unset: this
+  // column has never distinguished a failed download from "On server" (retrying just
+  // re-enqueues), and adding that distinction is a separate change from fixing what this
+  // method exists for.
+  home_book_slots::QueueView queue;
+  queue.entries.reserve(snap.count);
   for (size_t i = 0; i < snap.count; i++) {
-    if (snap.items[i].id == remoteId) return true;
+    const auto state = snap.items[i].status == download_queue::ItemStatus::Downloading
+                           ? home_book_slots::State::Downloading
+                           : home_book_slots::State::Queued;
+    queue.entries.push_back({snap.items[i].id, state, static_cast<int>(i) + 1});
   }
-  return false;
+  return queue;
 }
 
 void FileBrowserActivity::activateIndex(const int index) {
