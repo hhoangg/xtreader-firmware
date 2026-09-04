@@ -161,8 +161,13 @@ class Worker {
           path = front->path;
           state_.markDownloading(id);
           cancelRequested_ = false;
+        } else {
+          // Left empty -- paused, item stays Pending, checked again below. Only logged
+          // reason available here: the check itself lives in main.cpp and doesn't say
+          // which of its two conditions (library_sync active, or a book open) fired.
+          LOG_DBG("DLQ", "Holding off %s: safety check refused (library_sync active or a book is open)",
+                  front->id.c_str());
         }
-        // else: leave id empty -- paused, item stays Pending, checked again below
       }
 
       if (id.empty()) {

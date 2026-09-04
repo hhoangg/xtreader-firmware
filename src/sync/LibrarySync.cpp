@@ -61,7 +61,10 @@ class Worker {
     // WiFi.status() and SYNC_STORE.isPaired() are both plain in-memory
     // reads, safe to call from the render task on every repaint.
     if (!hasWorkToDo()) return false;
-    if (safetyCheck_ && !safetyCheck_()) return false;
+    if (safetyCheck_ && !safetyCheck_()) {
+      LOG_DBG("LIBSYNC", "Refusing to start: download_queue is active");
+      return false;
+    }
 
     const BaseType_t created =
         xTaskCreate(&Worker::taskTrampoline, "LibrarySync", WORKER_STACK_BYTES, this, 1, &taskHandle_);
