@@ -1019,11 +1019,26 @@ void HomeActivity::render(RenderLock&&) {
   renderer.clearScreen();
   bool bufferRestored = coverBufferStored && restoreCoverBuffer();
 
+  // Heap-free struct copy (see LibrarySync.h) -- safe to read every render.
+  const library_sync::Status syncStatus = library_sync::status();
+  const char* syncSubtitle = nullptr;
+  switch (syncStatus.phase) {
+    case library_sync::Phase::ConnectingWifi:
+      syncSubtitle = tr(STR_CONNECTING_SAVED_WIFI);
+      break;
+    case library_sync::Phase::Syncing:
+      syncSubtitle = tr(STR_SYNCING_LIBRARY);
+      break;
+    case library_sync::Phase::Idle:
+      break;
+  }
+
   // Band spans topPadding..homeTopPadding: the cover tile starts at the fixed
   // homeTopPadding, so the height must shrink by topPadding or the band (and a
   // centered title, e.g. RoundedRaff's book title) sinks into the tile.
   GUI.drawHeader(renderer, Rect{0, metrics.topPadding, pageWidth, metrics.homeTopPadding - metrics.topPadding},
-                 metrics.homeContinueReadingInMenu && !tileBooks.empty() ? tileBooks[0].title.c_str() : nullptr);
+                 metrics.homeContinueReadingInMenu && !tileBooks.empty() ? tileBooks[0].title.c_str() : nullptr,
+                 syncSubtitle);
 
   // Record the tile rect so storeCoverBuffer (called from the theme) knows
   // which sub-region of the framebuffer to snapshot. ~16 KB in Portrait
