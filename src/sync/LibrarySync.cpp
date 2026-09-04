@@ -173,7 +173,15 @@ class Worker {
     // ever connects WiFi, so without this the automatic sync below never
     // runs at all).
     if (sync_trigger::shouldAttemptLibraryWifiConnect(paired, wifiConnected, wifiConnectAttemptedThisBoot_)) {
-      wifiConnectAttemptedThisBoot_ = true;
+      // Locked even though this task is the only writer: start() reads both
+      // latches from the render task via hasWorkToDo(), and this firmware
+      // also ships as sticky-gh_release on the dual-core ESP32-S3, where a
+      // locked read against an unlocked write on the other core has no
+      // ordering guarantee.
+      {
+        Lock lock(mutex_);
+        wifiConnectAttemptedThisBoot_ = true;
+      }
 
       backoffState = sleep_progress_sync::loadWifiBackoffState();
       if (!sleep_wifi_backoff::shouldAttempt(backoffState)) {
@@ -220,7 +228,10 @@ class Worker {
     if (!sync_trigger::shouldAutoSync(paired, wifiConnected, manifestSyncAttemptedThisBoot_)) {
       return finish(/*syncRan=*/false, /*syncOk=*/false);
     }
-    manifestSyncAttemptedThisBoot_ = true;
+    {
+      Lock lock(mutex_);
+      manifestSyncAttemptedThisBoot_ = true;
+    }
 
     setPhase(Phase::Syncing);
     // Bounded, but with its own budget rather than the shorter power-off one
