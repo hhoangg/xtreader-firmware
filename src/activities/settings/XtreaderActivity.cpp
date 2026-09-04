@@ -44,18 +44,31 @@ constexpr StrId TAB_LABELS[XtreaderActivity::TAB_COUNT] = {StrId::STR_CAT_ACCOUN
                                                            StrId::STR_CAT_WALLPAPERS};
 
 // Character cap for the Server URL row's *value*. The list row widget draws
-// item.value right-aligned and never truncates it, so an over-long value takes
-// width from the label until the label disappears off the row (the label's Rect
-// goes to zero/negative width and GfxRendererTarget::text() draws nothing for
-// it).
+// item.value right-aligned and never truncates it, so an over-long value
+// takes width from the label until the label disappears off the row (the
+// label's Rect goes to zero/negative width and GfxRendererTarget::text()
+// draws nothing for it).
 //
 // Measured with tools/render_ui_screens against the real UI fonts and Lyra
-// theme geometry: on the X4's 480px-wide portrait band the row content is
-// 424px, "Server URL" sets at 125px, and the value has a 281px budget left. 30
-// is the exact-fit maximum middleEllipsis() can keep within that budget; 34
-// already clips the label. This row has been fixed three times on exactly that
-// kind of margin error, so it stays at 28: two characters of headroom in
-// exchange for the failure mode not existing.
+// theme geometry (the default theme, CrossPointSettings.h's `uiTheme =
+// LYRA`): on the X4's 480px-wide portrait band, the row content is 424px
+// (listInset=20, listSidePadding=8 either side); "Server URL" sets in Ubuntu
+// 12pt regular (the row's label font) at 125px; the value (Ubuntu 10pt
+// regular) has an 8px valueInset and 10px textGap before it, leaving a
+// 281px budget. 30 is the exact-fit maximum that
+// StringUtils::middleEllipsis() can keep within that budget alongside the
+// complete label -- 34 already clips it. That was measured against the
+// 41-character workers.dev hostname this firmware used to default to; the
+// default is now https://xtreader.com at 20 characters and never truncates
+// at all, so what the cap protects is a self-hosted URL, which can be any
+// length. middleEllipsis() is a
+// character-count heuristic, not a pixel measurement (see its own doc
+// comment), so a self-hosted hostname at the same character count but wider
+// glyphs (more digits/caps) could still clip the label at exactly 30 -- this
+// row has already been fixed three times on exactly that kind of margin
+// error, so it stays at 28: two characters of headroom, invisible on any
+// hostname anyone actually reads in full, in exchange for the failure mode
+// not existing.
 constexpr size_t SERVER_URL_VALUE_MAX_CHARS = 28;
 
 }  // namespace

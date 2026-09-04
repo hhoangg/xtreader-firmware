@@ -105,13 +105,13 @@ class HomeActivity final : public Activity {
     int navLabelHeight = 0;
     int navBarTop = 0;
     int navBarHeight = 0;
-    int navCellWidth = 0;  // one of the four equal nav cells
+    int navCellWidth = 0;  // one of the five equal nav cells
   };
   SlotBandLayout slotBandLayout() const;
   // Everything between the cover tile and the button hints: one row per entry
-  // in slots_, then the four-icon nav strip, whose selected item's label sits
+  // in slots_, then the five-icon nav strip, whose selected item's label sits
   // above the strip's top rule rather than under its own icon (a label as long
-  // as "File Transfer" does not fit a quarter-width cell). Immediate-mode: it
+  // as "File Transfer" does not fit a fifth-width cell). Immediate-mode: it
   // draws once per render() and never schedules a repaint of its own, because
   // a repaint that lands mid-download has no heap to run in.
   void drawSlotBand(const SlotBandLayout& layout, int selectedSlot, int selectedNav) const;
