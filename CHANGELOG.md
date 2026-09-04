@@ -6,6 +6,61 @@ the GitHub release page. Write for someone holding the device, not for someone
 reading the commit log: name the behaviour that changed, not the code that
 changed. Anything with no user-visible effect belongs under "Under the hood".
 
+## 1.8.0
+
+### Everything this fork adds now lives behind one icon
+
+The bottom strip has a fifth icon, the Xtreader X, sitting in the middle. It
+opens a screen with three tabs that gathers every feature this fork adds on top
+of CrossPoint, so they are in one place instead of scattered through Settings.
+
+**Account** holds the server URL, which account this reader is paired to, and
+Pair or Unlink. **Library** holds Request Books, the download queue (tap it to
+cancel everything queued), Sync Now, and two settings that until now could only
+be changed from the web page: whether progress is matched by filename or by file
+content, and whether the reader sends book metadata when it syncs. **Wallpapers**
+holds the gallery and the "synced wallpapers only" switch.
+
+Account Sync used to be four levels deep, at Settings > System > Account Sync.
+The wallpaper gallery sat under Display, next to sleep-screen settings it is only
+loosely related to. Both are gone from Settings and live here now, one level
+shallower than before.
+
+### The "continue from another device?" prompt stops crying wolf
+
+Opening a book synced from a Kindle almost always asked whether you wanted to
+jump to a position you were already at. The reader was comparing two numbers that
+were never the same thing: KOReader counts a percentage in its own pages, this
+reader counts it in bytes through the file. On a book with images or long
+chapters they disagree by several percent on every page.
+
+It now compares which chapter you are in, and only offers to move when that
+actually differs. The dialog names the chapter instead of showing a percentage.
+
+Two related fixes: answering the prompt is remembered, so the same book does not
+ask again on the next open; and a reading position that failed to reach the
+server before sleep is retried on the next sleep instead of being quietly
+dropped.
+
+### Fixed
+
+- Footnote links are drawn as superscript again.
+- Two Perso-Arabic marks (U+0654, U+06D5) were missing from the interface fonts
+  and rendered as blanks.
+- The glyph cache no longer gives up when free memory is low, which is exactly
+  when a page is hardest to draw.
+- A last-resort chapter position could be written in a form the reader could not
+  read back, losing the position it had just saved.
+
+### Under the hood
+
+- Six commits merged from upstream CrossPoint.
+- Every row this fork had inserted into CrossPoint's Settings screen has been
+  moved out of it, so that file now merges from upstream without a hand
+  resolution.
+- Settings lookup tables are compile-time constants, and the built-in fonts'
+  content-hash IDs were stale and are regenerated.
+
 ## 1.7.0
 
 ### New books show up on Home, and download from there
