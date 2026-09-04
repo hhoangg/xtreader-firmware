@@ -47,6 +47,20 @@ class Worker {
   bool start() {
     Lock lock(mutex_);
     if (taskHandle_ != nullptr) return false;  // already running
+    // HomeActivity calls start() on every repaint (cursor movement, download
+    // queue changes, a returning activity), by design -- polling is cheaper
+    // than wiring a push path through an Activity this module must not know
+    // about. That means the common case, after the one real sync per boot,
+    // is "nothing to do", and it has to be the cheap path: without this
+    // check every one of those repaints would xTaskCreate() a 12288-byte
+    // stack only for the task to wake up, find both gates below permanently
+    // closed, and self-delete -- heap churn on a device whose largest free
+    // block already falls to ~7 KB mid-download, and outright xTaskCreate
+    // failure if that block isn't there. Reuses run()'s own gates (rather
+    // than re-deriving "is there work" here) so the two can never disagree;
+    // WiFi.status() and SYNC_STORE.isPaired() are both plain in-memory
+    // reads, safe to call from the render task on every repaint.
+    if (!hasWorkToDo()) return false;
     if (safetyCheck_ && !safetyCheck_()) return false;
 
     const BaseType_t created =
@@ -126,6 +140,21 @@ class Worker {
   static void saveBackoffState(const sleep_wifi_backoff::State& state) {
     RenderLock lock;
     sleep_progress_sync::saveWifiBackoffState(state);
+  }
+
+  // True if run() could still do something this boot. Once
+  // wifiConnectAttemptedThisBoot_ is set, shouldAttemptLibraryWifiConnect()
+  // is permanently false for the rest of the boot regardless of paired/
+  // wifiConnected; once manifestSyncAttemptedThisBoot_ is set, the same is
+  // true of shouldAutoSync(). So calling the actual predicates here (instead
+  // of just testing the two latches) is exactly equivalent, costs two cheap
+  // in-memory reads, and can never drift from run()'s own gates if either
+  // predicate's inputs ever grow beyond these three.
+  bool hasWorkToDo() const {
+    const bool paired = SYNC_STORE.isPaired();
+    const bool wifiConnected = WiFi.status() == WL_CONNECTED;
+    return sync_trigger::shouldAttemptLibraryWifiConnect(paired, wifiConnected, wifiConnectAttemptedThisBoot_) ||
+           sync_trigger::shouldAutoSync(paired, wifiConnected, manifestSyncAttemptedThisBoot_);
   }
 
   void run() {
