@@ -50,6 +50,7 @@
 #include "sync/BookDownloader.h"
 #include "sync/BookServerDelete.h"
 #include "sync/DownloadQueue.h"
+#include "sync/LibrarySync.h"
 #include "sync/RemoteProgressCheck.h"
 #include "sync/SleepProgressSync.h"
 #include "sync/SyncManifest.h"
@@ -405,15 +406,16 @@ void setupDisplayAndFonts(bool seamless = false) {
   LOG_DBG("MAIN", "Fonts setup");
 }
 
-// download_queue's SafetyCheck: enforces "sync from the library screen,
-// never with a book open" (docs/API.md's measured heap numbers -- a TLS
-// session costs ~9 KB, comfortable against the ~137 KB free on the library
-// screen, risky against the ~50 KB a reading session leaves) from the one
-// place that actually knows what activity is current, so the queue's worker
-// task pauses itself rather than every future caller having to remember to
-// check. Plain function pointer (see CLAUDE.md's "Template and std::function
-// Bloat"), matching download_queue::SafetyCheck's signature.
-static bool downloadQueueSafetyCheck() { return !activityManager.isReaderActivity(); }
+// Shared SafetyCheck for download_queue and library_sync: enforces "sync
+// from the library screen, never with a book open" (docs/API.md's measured
+// heap numbers -- a TLS session costs ~9 KB, comfortable against the ~137 KB
+// free on the library screen, risky against the ~50 KB a reading session
+// leaves) from the one place that actually knows what activity is current,
+// so each worker task pauses itself rather than every future caller having
+// to remember to check. Plain function pointer (see CLAUDE.md's "Template
+// and std::function Bloat"), matching both modules' identical SafetyCheck
+// signature.
+static bool backgroundSyncSafetyCheck() { return !activityManager.isReaderActivity(); }
 
 void setup() {
   BoardConfig::holdPowerRails();
@@ -503,7 +505,8 @@ void setup() {
   // NVS, not the SD card (see SyncCredentialStore.h) -- no SPI/RenderLock
   // dance needed, so it can load unconditionally at boot like the others.
   SYNC_STORE.load();
-  download_queue::setSafetyCheck(&downloadQueueSafetyCheck);
+  download_queue::setSafetyCheck(&backgroundSyncSafetyCheck);
+  library_sync::setSafetyCheck(&backgroundSyncSafetyCheck);
   UITheme::getInstance().reload();
   ButtonNavigator::setMappedInputManager(mappedInputManager);
 

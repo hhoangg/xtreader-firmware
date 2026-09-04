@@ -24,7 +24,6 @@
 #include "CrossPointState.h"
 #include "MappedInputManager.h"
 #include "RecentBooksStore.h"
-#include "SleepWifiBackoffPolicy.h"
 #include "SyncCredentialStore.h"
 #include "components/UIScale.h"
 #include "components/UITheme.h"
@@ -37,56 +36,23 @@
 #include "fontIds.h"
 #include "sync/BookFinishedNotifier.h"
 #include "sync/DownloadQueue.h"
-#include "sync/SleepProgressSync.h"
+#include "sync/LibrarySync.h"
 #include "sync/SyncManifest.h"
-#include "sync/Telemetry.h"
 #include "sync/WallpaperSync.h"
 
 namespace {
-// Once-per-boot latches for trySyncLibrary(): HomeActivity is destroyed and
-// recreated every time the library screen is (re-)entered (goHome() calls
-// ActivityManager::replaceActivity()), so a member flag would reset on every
-// visit; these plain statics survive across those instances and reset only
-// on a real reboot -- which this device also goes through on every sleep
-// wake (see SyncTriggerPolicy.h), so "once per boot" and "once per wake"
-// are the same event here.
-bool manifestSyncAttemptedThisBoot = false;
-// Gates the Wi-Fi bring-up itself (see shouldAttemptLibraryWifiConnect()),
-// separate from manifestSyncAttemptedThisBoot above: a device that is
-// already connected on its first Home visit never needs a bring-up attempt
-// at all, but must still gate the sync itself the usual way.
-bool libraryWifiConnectAttemptedThisBoot = false;
-
-// Set when a Wi-Fi bring-up this boot actually connected, and cleared once the
-// manifest sync that follows has reported whether the network was really
-// reachable. It has to outlive a single render pass because those two steps are
-// now deliberately split across passes -- see trySyncLibrary().
-bool libraryWifiBringUpAwaitingSyncResult = false;
-
-// Once-per-boot latch for trySyncWallpapers(), separate from the library
-// one: this counts the boot toward the wallpaper cadence even on a boot that
-// does not sync (see CrossPointState::bootsSinceWallpaperSync), so it has to
-// be set on every path, not only the one that reaches the network.
+// Once-per-boot latch for trySyncWallpapers(): this counts the boot toward
+// the wallpaper cadence even on a boot that does not sync (see
+// CrossPointState::bootsSinceWallpaperSync), so it has to be set on every
+// path, not only the one that reaches the network. HomeActivity is destroyed
+// and recreated every time the library screen is (re-)entered (goHome()
+// calls ActivityManager::replaceActivity()), so a member flag would reset on
+// every visit; this plain static survives across those instances and resets
+// only on a real reboot -- which this device also goes through on every
+// sleep wake (see SyncTriggerPolicy.h), so "once per boot" and "once per
+// wake" are the same event here. The library sync's own once-per-boot
+// latches live inside library_sync::Worker now, for the same reason.
 bool wallpaperSyncCheckedThisBoot = false;
-
-// The opaque wallpaper-set fingerprint this boot's heartbeat came back with
-// (0 = none, see telemetry::TelemetryResult::wallpaperRevision). Set by
-// trySyncLibrary(), read by trySyncWallpapers() -- which usually runs on a
-// *later* render pass than the heartbeat that filled this in, since it
-// defers whenever trySyncLibrary() drew a popup. A plain static for the same
-// reason as the latches above: it has to outlive both this render pass and
-// this HomeActivity instance, but never a reboot.
-uint32_t heartbeatWallpaperRevision = 0;
-
-// Set by trySyncLibrary() whenever it puts a popup on screen this render
-// pass. drawPopup() paints only its own box, sized to its own text, and the
-// requestUpdate() that follows is deferred to the end of
-// ActivityManager::loop() -- so a second popup drawn in the same pass lands
-// inside the first one's, whose edges stay visible around it.
-// trySyncWallpapers() reads this and defers to the next pass rather than
-// drawing over it, the same hand-off trySyncLibrary() already makes to
-// itself after a Wi-Fi bring-up.
-bool librarySyncPopupUsedThisPass = false;
 
 // Context for the wallpaper sync's progress callback -- plain pointers, not
 // a capturing lambda (see CLAUDE.md's "Template and std::function Bloat").
@@ -623,8 +589,9 @@ void HomeActivity::rebuildSlots() {
   // Safe from every call site: ActivityManager::loop() calls loop() with the
   // lock deliberately not held ("the loop() method must be responsible for
   // acquire one if needed") and unlocks before onEnter(). It is NOT safe from
-  // render(), which already holds it -- see trySyncLibrary(), which sets
-  // slotsRebuildPending instead of calling this.
+  // render(), which already holds it -- trySyncLibrary() never calls this
+  // for that reason; only loop(), through pollDownloadQueue() and
+  // pollLibrarySync(), does.
   RenderLock lock(*this);
 
   // The one source, re-read here rather than at onEnter() alone: a finished
@@ -688,6 +655,12 @@ void HomeActivity::onEnter() {
   lastPulseGeneration = pulse.generation;
   lastPulseCompletions = pulse.completions;
 
+  // Same reasoning, for a sync the worker may have started (or finished)
+  // during a previous visit to Home this boot.
+  const library_sync::Status syncStatus = library_sync::status();
+  lastLibrarySyncGeneration = syncStatus.generation;
+  librarySyncRunning = syncStatus.phase != library_sync::Phase::Idle;
+
   // Trigger first update
   requestUpdate();
 }
@@ -737,10 +710,10 @@ void HomeActivity::freeCoverBuffer() {
 
 void HomeActivity::pollDownloadQueue() {
   // No stand-off after a popup, unlike FileBrowserActivity's poll: every
-  // popup Home draws (loadRecentCovers(), trySyncLibrary(), trySyncWallpapers())
-  // is a progress popup whose own code path immediately follows it with
-  // requestUpdate() to wipe it. None of them is a message left standing for
-  // the reader, so there is nothing here for a poll-driven repaint to erase --
+  // popup Home draws (loadRecentCovers(), trySyncWallpapers()) is a progress
+  // popup whose own code path immediately follows it with requestUpdate() to
+  // wipe it. None of them is a message left standing for the reader, so
+  // there is nothing here for a poll-driven repaint to erase --
   // FileBrowserActivity's guard exists for its delete-error popup, which
   // deliberately omits that requestUpdate().
   const download_queue::Pulse pulse = download_queue::pulse();
@@ -755,6 +728,31 @@ void HomeActivity::pollDownloadQueue() {
   // already cleared the entry's remoteId in the store, keeping its position,
   // and the re-read inside rebuildSlots() picks that up.
   rebuildSlots();  // takes RenderLock itself, and releases it before the update below
+  requestUpdate();
+}
+
+void HomeActivity::pollLibrarySync() {
+  const library_sync::Status status = library_sync::status();
+  if (status.generation == lastLibrarySyncGeneration) return;
+  lastLibrarySyncGeneration = status.generation;
+
+  const bool wasRunning = librarySyncRunning;
+  librarySyncRunning = status.phase != library_sync::Phase::Idle;
+
+  // Only the transition out of a sync this activity actually watched start
+  // counts as "just finished" -- see librarySyncRunning's comment for why
+  // lastSyncRan/lastSyncOk alone cannot tell a real completion from one of
+  // the worker's own instant, once-per-boot-latched no-ops.
+  if (wasRunning && !librarySyncRunning && status.lastSyncRan && status.lastSyncOk) {
+    // onEnter() built slots_ from the recency list as it stood before this
+    // sync, so on the one boot that actually discovers a new book Home would
+    // otherwise show nothing until the reader navigated away and back -- the
+    // exact problem the rows exist to solve. Order matters: this mutates
+    // RECENT_BOOKS, and rebuildSlots() re-reads it right after.
+    runRecentDiscovery();
+    rebuildSlots();  // takes RenderLock itself; loop() holds none to deadlock against
+  }
+
   requestUpdate();
 }
 
@@ -818,16 +816,8 @@ void HomeActivity::activateSlot(const home_book_slots::Slot& slot) {
 }
 
 void HomeActivity::loop() {
-  if (slotsRebuildPending) {
-    // The library sync that ran on the render task found the index changed;
-    // this is the first moment a rebuild can take RenderLock without
-    // deadlocking against it. See trySyncLibrary().
-    slotsRebuildPending = false;
-    rebuildSlots();
-    requestUpdate();
-  }
-
   pollDownloadQueue();  // before input: a queue move repaints whatever the reader is doing
+  pollLibrarySync();    // before input: a completed background sync repaints the same way
 
   const int menuCount = getMenuItemCount();
   const auto& metrics = UITheme::getInstance().getMetrics();
@@ -1052,7 +1042,6 @@ void HomeActivity::render(RenderLock&&) {
     // automatic library sync) was never reached at all.
     requestUpdate();
   } else {
-    librarySyncPopupUsedThisPass = false;
     trySyncLibrary();
     tryDeliverPendingBookFinished();
     trySyncWallpapers();
@@ -1238,168 +1227,31 @@ void HomeActivity::runRecentDiscovery() {
 
   LOG_DBG("HOME", "Recent discovery: %u inserted, %u dropped (firstSync=%s)", (unsigned)decision.insertFront.size(),
           (unsigned)decision.dropRemoteIds.size(), input.firstSync ? "yes" : "no");
-  // This activity's own copy of the list is refreshed by the rebuild
-  // trySyncLibrary() has already scheduled through slotsRebuildPending:
-  // rebuildSlots() re-reads RECENT_BOOKS under its own RenderLock, which this
-  // function -- running on the render task with the rendering mutex held --
-  // cannot take itself.
+  // This activity's own copy of the list is refreshed by rebuildSlots(),
+  // which pollLibrarySync() calls right after this returns.
 }
 
 void HomeActivity::trySyncLibrary() {
-  bool wifiConnected = WiFi.status() == WL_CONNECTED;
-
-  // The bring-up itself: once per boot, only when paired and not already
-  // connected (see SyncTriggerPolicy.h's shouldAttemptLibraryWifiConnect()
-  // for why this is now worth doing -- nothing else in a production build
-  // ever connects WiFi, so without this the automatic sync below never runs
-  // at all). libraryWifiBringUpAwaitingSyncResult tracks whether a bring-up
-  // this boot actually connected, so the back-off update after the sync only
-  // fires for an attempt this function made, not for WiFi that happened to
-  // already be up for some unrelated reason.
-  if (sync_trigger::shouldAttemptLibraryWifiConnect(SYNC_STORE.isPaired(), wifiConnected,
-                                                    libraryWifiConnectAttemptedThisBoot)) {
-    libraryWifiConnectAttemptedThisBoot = true;
-
-    const sleep_wifi_backoff::State backoffState = sleep_progress_sync::loadWifiBackoffState();
-    if (!sleep_wifi_backoff::shouldAttempt(backoffState)) {
-      LOG_DBG("HOME", "Skipping library WiFi bring-up: backed off (%u skip(s) left after %u consecutive failure(s))",
-              backoffState.skipsRemaining, backoffState.consecutiveFailures);
-      sleep_progress_sync::saveWifiBackoffState(sleep_wifi_backoff::afterSkippedAttempt(backoffState));
-    } else {
-      // Visible while it happens (task brief): same blocking-popup pattern
-      // the sync below already uses, reusing the existing "Connecting to
-      // saved Wi-Fi..." string from the Wi-Fi selection screen rather than
-      // adding a near-duplicate one. Runs from render(), already on the
-      // render task -- no RenderLock needed here, same reasoning as the
-      // sync popup below.
-      librarySyncPopupUsedThisPass = true;
-      GUI.drawPopup(renderer, tr(STR_CONNECTING_SAVED_WIFI));
-      bool cancelled = false;
-      // This runs on the render task, inside HomeActivity::render(), which
-      // already holds ActivityManager's rendering mutex for the whole call
-      // (see ActivityManager::renderTaskLoop()) -- connectToSavedWifi() must
-      // not try to take it again itself, or the render task deadlocks
-      // against itself (renderingMutex is not recursive). See that
-      // function's header comment.
-      // pollPowerButton=true keeps the owner's escape hatch on the visible,
-      // popup-blocked bring-up, exactly as before the parameter existed.
-      wifiConnected = sleep_progress_sync::connectToSavedWifi(cancelled, /*callerHoldsRenderLock=*/true,
-                                                              /*pollPowerButton=*/true);
-      requestUpdate();  // redraw Home without the popup
-
-      if (cancelled) {
-        // Power button wins, same reasoning as SleepProgressSync.cpp: leave
-        // the back-off state untouched, and don't chase the sync below with
-        // a search that was just deliberately cut short.
-        return;
-      }
-      if (!wifiConnected) {
-        // No network reached at all -- back off exactly as the sleep path
-        // does when the search itself finds nothing (see
-        // SleepWifiBackoffPolicy.h). shouldAutoSync requires wifiConnected, so
-        // there is nothing left to do this pass and no second, more precise
-        // "did we reach the real internet" signal coming for this attempt.
-        sleep_progress_sync::saveWifiBackoffState(sleep_wifi_backoff::afterAttempt(backoffState, false));
-        return;
-      }
-
-      // Hand the sync itself to the NEXT render pass instead of falling
-      // through to it here.
-      //
-      // drawPopup() paints only its own box, sized to its own text, and the
-      // requestUpdate() above is deferred -- its flag is consumed at the end of
-      // ActivityManager::loop(), which cannot run while this render pass is
-      // still on the stack. Drawing the "Syncing library" popup from here
-      // therefore lands it on top of the wider "Connecting to saved Wi-Fi" one,
-      // whose edges stay visible around it. Returning lets the next pass clear
-      // the screen and repaint Home first, so the second popup opens on a clean
-      // screen -- the same hand-off loadRecentCovers() already makes to this
-      // function.
-      //
-      // The back-off update owed to this bring-up moves with it, via the flag.
-      libraryWifiBringUpAwaitingSyncResult = true;
-      return;
-    }
-  }
-
-  if (!sync_trigger::shouldAutoSync(SYNC_STORE.isPaired(), wifiConnected, manifestSyncAttemptedThisBoot)) {
-    return;
-  }
-  manifestSyncAttemptedThisBoot = true;
-
-  // Visible while it happens (task brief): same blocking-popup pattern
-  // loadRecentCovers() already uses above.
-  librarySyncPopupUsedThisPass = true;
-  GUI.drawPopup(renderer, tr(STR_SYNCING_LIBRARY));
-  // Bounded, but with its own budget rather than the shorter power-off one --
-  // see SyncTriggerPolicy.h's HOME_SYNC_TIMEOUT_MS for why the two differ.
-  // A captive portal or black-holed server still must not stall the render
-  // task behind the popup above indefinitely.
-  const sync_manifest::SyncResult syncResult = sync_manifest::sync(sync_trigger::HOME_SYNC_TIMEOUT_MS);
-  // FileBrowserActivity reads whatever landed on SD; syncResult itself is only used below.
-  requestUpdate();  // redraw Home without the popup
-
-  if (syncResult.ok) {
-    // onEnter() built slots_ from the recency list as it was BEFORE this
-    // sync, so on the one boot that actually discovers a new book Home would
-    // otherwise show nothing until the reader navigated away and back -- the
-    // exact problem the rows exist to solve.
-    //
-    // A flag, not a rebuildSlots() call: this runs on the render task inside
-    // render(), which already holds the rendering mutex, and rebuildSlots()
-    // takes RenderLock, which is not recursive. Calling it here deadlocks the
-    // render task against itself. loop() does the rebuild and the repaint.
-    slotsRebuildPending = true;
-
-    // Merge what the sync learned into the one recency list, before that
-    // rebuild runs. Touches only RECENT_BOOKS, never slots_ or this
-    // activity's own copy of the list, for the reason above.
-    runRecentDiscovery();
-  }
-
-  if (libraryWifiBringUpAwaitingSyncResult) {
-    libraryWifiBringUpAwaitingSyncResult = false;
-    // The manifest fetch above is the first real proof this bring-up
-    // reached more than just the access point -- a captive portal
-    // associates too, then this fetch fails exactly like "no Wi-Fi here"
-    // (see SleepWifiBackoffPolicy.h's reachedNetwork() for the same
-    // reasoning on the sleep path, and SyncManifest.cpp for where
-    // "fetch_failed" is set). Any other error (not_paired can't happen here
-    // -- paired was already checked above; sd_write_failed, corrupt_index,
-    // missing_trailer, too_many_pages, rename_failed) still proves a real
-    // response came back, so it must not count as "no Wi-Fi here" either.
-    const bool reached = syncResult.error != "fetch_failed";
-    sleep_progress_sync::saveWifiBackoffState(
-        sleep_wifi_backoff::afterAttempt(sleep_progress_sync::loadWifiBackoffState(), reached));
-  }
-
-  // WiFi is already up for the manifest sync above -- one of the two moments
-  // (task brief) a heartbeat can ride along without paying its own WiFi cost.
-  // Best-effort: a failed heartbeat must not affect the library sync it rides
-  // with, so its result is only logged, never surfaced to the reader. Same
-  // automatic bound as the sync above.
-  telemetry::HeartbeatInfo heartbeatInfo = telemetry::currentDeviceHeartbeatInfo();
-  heartbeatInfo.lastSyncStatus = syncResult.ok ? "ok" : "failed";
-  const telemetry::TelemetryResult heartbeatResult =
-      telemetry::sendHeartbeat(heartbeatInfo, sync_trigger::AUTO_SYNC_TIMEOUT_MS);
-  if (!heartbeatResult.ok) {
-    LOG_DBG("HOME", "Heartbeat piggybacked on library sync failed (error=%s status=%d) -- diagnostics only",
-            heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
-  }
-  // The one thing the heartbeat brings back that changes behaviour: how
-  // trySyncWallpapers() below learns the assigned set was edited without
-  // waiting out the boot cadence. 0 on any failure, which is exactly the
-  // "leave the cadence to it" value.
-  heartbeatWallpaperRevision = heartbeatResult.wallpaperRevision;
+  // Every decision this used to make inline -- Wi-Fi bring-up eligibility,
+  // the once-per-boot latches, back-off, shouldAutoSync -- now lives in the
+  // worker (src/sync/LibrarySync.h), which start() defers to. This never
+  // blocks: start() returns immediately, refusing outright if a sync is
+  // already running or the safety check (main.cpp) says no. Whether it was
+  // "worth attempting" is exactly what the worker decides next.
+  library_sync::start();
 }
 
 void HomeActivity::trySyncWallpapers() {
-  // Never on a pass trySyncLibrary() already drew a popup on -- see
-  // librarySyncPopupUsedThisPass. Deliberately checked before the once-per-
-  // boot latch below, so deferring costs a render pass, not the whole sync.
-  if (librarySyncPopupUsedThisPass) return;
   if (wallpaperSyncCheckedThisBoot) return;
   wallpaperSyncCheckedThisBoot = true;
+
+  // The fingerprint the worker's piggybacked heartbeat came back with, read
+  // once here rather than through a file-static the render task used to
+  // write directly: the heartbeat now runs on library_sync's own task (see
+  // Status::wallpaperRevision's comment), so this is the only safe way to
+  // read it from here. Read once and reused below rather than at each call
+  // site, so a sync landing between the two sees a consistent value.
+  const uint32_t heartbeatWallpaperRevision = library_sync::status().wallpaperRevision;
 
   const uint16_t boots = APP_STATE.bootsSinceWallpaperSync;
   if (!sync_trigger::shouldSyncWallpapers(SYNC_STORE.isPaired(), WiFi.status() == WL_CONNECTED,
@@ -1415,10 +1267,11 @@ void HomeActivity::trySyncWallpapers() {
     return;
   }
 
-  // Same blocking-popup pattern as trySyncLibrary() and loadRecentCovers(),
-  // with loadRecentCovers()'s progress fill on top: each 96 KB wallpaper is
-  // seconds of blocking, so a bar that moves is the difference between "slow"
-  // and "hung". No new popup style.
+  // Same blocking-popup pattern loadRecentCovers() uses, with its progress
+  // fill on top: each 96 KB wallpaper is seconds of blocking, so a bar that
+  // moves is the difference between "slow" and "hung". No new popup style.
+  // Unlike the library sync, this one still runs inline on the render task --
+  // out of scope for this change, which only moved the library sync itself.
   const Rect popupRect = GUI.drawPopup(renderer, tr(STR_SYNCING_WALLPAPERS));
   WallpaperProgressCtx progressCtx{&renderer, popupRect};
   // The manifest page gets the library screen's own budget; each file
@@ -1454,10 +1307,10 @@ void HomeActivity::tryDeliverPendingBookFinished() {
   }
   bookFinishedAttemptedThisVisit = true;
 
-  // No popup: unlike trySyncLibrary(), there is nothing for the owner to
-  // see change, and this is a background signal, not something the reader
-  // asked for -- see BookFinishedNotifier.h. Still headroom-safe to block
-  // the render task briefly for, same as the sync above.
+  // No popup: nothing for the owner to see change, and this is a background
+  // signal, not something the reader asked for -- see
+  // BookFinishedNotifier.h. Still headroom-safe to block the render task
+  // briefly for, same as trySyncWallpapers() above.
   if (book_finished_notifier::tryDeliver(APP_STATE.pendingBookFinishedPath)) {
     APP_STATE.pendingBookFinishedPath.clear();
     APP_STATE.saveToFile();

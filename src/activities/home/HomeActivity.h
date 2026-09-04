@@ -135,11 +135,6 @@ class HomeActivity final : public Activity {
   // Puts a refused enqueue on screen. Nothing was queued, so no counter moved
   // and no repaint is coming; without a popup the row would just sit there.
   void showEnqueueRefused(download_queue::EnqueueOutcome outcome);
-  // Set by trySyncLibrary() when a sync changed the index, consumed by the
-  // next loop() pass. It cannot rebuild in place: trySyncLibrary() runs on the
-  // render task with the rendering mutex already held, and rebuildSlots()
-  // takes the non-recursive RenderLock.
-  bool slotsRebuildPending = false;
   // Refreshes the rows when the queue moved, and only then: a book entering
   // the queue, a download starting, and a download ending are the three
   // moments Home may repaint, because during a transfer the largest
@@ -150,6 +145,27 @@ class HomeActivity final : public Activity {
   // so entering mid-download does not rebuild for a change that predates it.
   uint32_t lastPulseGeneration = 0;
   uint32_t lastPulseCompletions = 0;
+  // Reacts to the background library_sync worker (src/sync/LibrarySync.h):
+  // repaints on every phase change, and -- only for a completion this
+  // activity actually watched start (see librarySyncRunning) -- runs the
+  // post-sync work trySyncLibrary() used to do inline: merge new discoveries
+  // into the recency list, then rebuild the rows from it. Called from
+  // loop(), which ActivityManager calls with RenderLock not held (see
+  // rebuildSlots()'s own comment), so calling it directly here is safe --
+  // unlike the render-task call site trySyncLibrary() used to be.
+  void pollLibrarySync();
+  // Last library_sync::status().generation this activity acted on, seeded in
+  // onEnter() so entering mid-sync does not replay a completion that
+  // predates it.
+  uint32_t lastLibrarySyncGeneration = 0;
+  // Whether the worker was mid-sync (phase != Idle) as of the last poll.
+  // lastSyncRan/lastSyncOk are sticky: once a real sync attempt sets them,
+  // they hold that outcome across every later no-op start() -- the worker's
+  // own once-per-boot latches turn those into an instant return to Idle
+  // without ever leaving it. Without this flag, pollLibrarySync() would read
+  // those stale fields and replay the discovery scan on every one of those
+  // no-op completions too, not just the one that actually ran.
+  bool librarySyncRunning = false;
   bool storeCoverBuffer();    // Store frame buffer for cover image
   bool restoreCoverBuffer();  // Restore frame buffer from stored cover
   void freeCoverBuffer();     // Free the stored cover buffer
@@ -165,25 +181,23 @@ class HomeActivity final : public Activity {
   // onEnter(); the re-read is what makes a completed download's
   // markDownloaded() and a sync's discoveries visible here.
   void rebuildSlots();
-  // Automatic "check whether there are new files" sync: runs at most once
-  // per boot, the first time the library screen is reached, and only if
-  // already paired (see lib/SyncManifest/SyncTriggerPolicy.h for the exact
-  // rules). If WiFi is not already connected, this brings it up itself
-  // first -- bounded, back-off shared with the before-sleep sync (see
-  // src/sync/SleepProgressSync.h) -- before checking whether to run the
-  // sync itself. Called from render(), right after the recent-covers
-  // loading stage, on the same "blocking with a visible popup" pattern
-  // loadRecentCovers() itself uses.
+  // Hands the automatic "check whether there are new files" sync to the
+  // library_sync background worker (src/sync/LibrarySync.h): every decision
+  // gate (paired, Wi-Fi bring-up eligibility, once-per-boot latches,
+  // back-off) now lives there, so this never duplicates them. Never blocks --
+  // library_sync::start() returns immediately, refusing outright if a sync
+  // is already running; pollLibrarySync() (called from loop()) reacts once
+  // the worker actually finishes. Called from render(), the same call site
+  // as when this ran inline.
   void trySyncLibrary();
   // Merges what the sync just learned into the one recency list: books the
   // server has that this device does not are inserted at the front, and
   // remote entries whose book was deleted server-side are dropped (see
   // lib/RecentDiscovery, which owns the rule, and
   // docs/superpowers/specs/2026-09-02-one-recency-list-design.md). Called
-  // only from trySyncLibrary(), only after a successful sync, and
-  // deliberately touches RECENT_BOOKS rather than slots_: it runs on the
-  // render task with the rendering mutex held, so the repaint it needs goes
-  // through slotsRebuildPending like every other post-sync change.
+  // only from pollLibrarySync(), only after a successful sync, and
+  // deliberately touches RECENT_BOOKS rather than slots_ directly --
+  // rebuildSlots() re-reads RECENT_BOOKS right after this returns.
   void runRecentDiscovery();
   // Delivers CrossPointState::pendingBookFinishedPath, if there is one and
   // conditions allow (see SyncTriggerPolicy.h's
@@ -191,20 +205,21 @@ class HomeActivity final : public Activity {
   // ReaderActivity's book-finished detection, deferred to here for heap
   // headroom (see BookFinishedNotifier.h). Gated per-visit
   // (bookFinishedAttemptedThisVisit, a plain member -- reset on every fresh
-  // HomeActivity, unlike trySyncLibrary()'s per-boot static), not per boot:
-  // a small telemetry POST is cheap enough to retry on every distinct visit,
-  // and doing so lets a second book finished later in the same boot still
-  // get reported once the user leaves and returns to Home, without waiting
-  // for the next reboot.
+  // HomeActivity, unlike the library sync's own per-boot latches, which now
+  // live inside library_sync::Worker), not per boot: a small telemetry POST
+  // is cheap enough to retry on every distinct visit, and doing so lets a
+  // second book finished later in the same boot still get reported once the
+  // user leaves and returns to Home, without waiting for the next reboot.
   void tryDeliverPendingBookFinished();
   bool bookFinishedAttemptedThisVisit = false;
   // Reconciles /.sleep against the wallpapers the server has assigned to this
-  // reader (src/sync/WallpaperSync.h). Runs after trySyncLibrary(), never on
-  // the same render pass as one of its popups, and -- unlike the library sync
-  // -- not on every boot: the cadence is a persisted boot count, since the
-  // board has no clock (see SyncTriggerPolicy.h's
+  // reader (src/sync/WallpaperSync.h). Runs after trySyncLibrary(), and --
+  // unlike the library sync -- not on every boot: the cadence is a persisted
+  // boot count, since the board has no clock (see SyncTriggerPolicy.h's
   // WALLPAPER_SYNC_BOOT_INTERVAL). Never brings Wi-Fi up itself; it rides on
-  // whatever the library sync's own bring-up left connected.
+  // whatever the library sync's own bring-up left connected, reading the
+  // fingerprint the worker's piggybacked heartbeat came back with straight
+  // from library_sync::status().wallpaperRevision.
   void trySyncWallpapers();
 
  public:
