@@ -9,7 +9,11 @@
  * The fork's own features, in one place: device pairing, library sync and the
  * wallpaper gallery. Everything here used to be reached through upstream's
  * Settings screen, which meant a fork hunk in SettingsActivity per feature;
- * this screen owns them instead, so that file's fork diff is empty.
+ * this screen owns them instead, so no hunk in SettingsActivity relates to a
+ * fork feature this screen owns. (SettingsActivity.{cpp,h} still carry two
+ * unrelated fork hunks of their own: the deletions that drop upstream's OPDS
+ * browser and KOReader-sync screens, and the CP_TEST_CONSOLE-guarded
+ * getSelectedRowInfo() accessor the device tests drive.)
  *
  * Absorbs the whole of the former SyncSettingsActivity -- its six rows are the
  * Account tab's three plus the Library tab's first three, in their original

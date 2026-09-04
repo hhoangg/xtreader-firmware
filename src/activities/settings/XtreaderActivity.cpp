@@ -40,6 +40,18 @@ constexpr XtreaderActivity::RowId TAB_ROWS[XtreaderActivity::TAB_COUNT][Xtreader
 
 constexpr int TAB_ROW_COUNT[XtreaderActivity::TAB_COUNT] = {3, 5, 2};
 
+// Compiler-checks what the array declaration above can't: every entry is a
+// count that indexes rowItems_/rowValues_, both sized MAX_TAB_ROWS. A count
+// outside (0, MAX_TAB_ROWS] compiles cleanly as an int but writes one past the
+// end of those fixed member arrays at runtime.
+constexpr bool allTabRowCountsInRange() {
+  for (int count : TAB_ROW_COUNT) {
+    if (count <= 0 || count > XtreaderActivity::MAX_TAB_ROWS) return false;
+  }
+  return true;
+}
+static_assert(allTabRowCountsInRange(), "TAB_ROW_COUNT entries must be in (0, MAX_TAB_ROWS]");
+
 constexpr StrId TAB_LABELS[XtreaderActivity::TAB_COUNT] = {StrId::STR_CAT_ACCOUNT, StrId::STR_CAT_LIBRARY,
                                                            StrId::STR_CAT_WALLPAPERS};
 
@@ -340,8 +352,10 @@ void XtreaderActivity::openWallpaperGallery() {
                          [this](const ActivityResult&) { requestUpdate(); });
 }
 
-// Two-value enums, so Confirm cycles rather than opening a picker. Both stores
-// persist in their own setter path, so there is nothing to save here.
+// Two-value enums, so Confirm cycles rather than opening a picker. The
+// setters only assign the in-memory field, so the explicit saveToFile() below
+// is what persists the change -- drop it and the setting would silently
+// revert on the next reboot.
 void XtreaderActivity::cycleDocumentMatching() {
   app.clearTapFlash();
   const bool wasBinary = KOREADER_STORE.getMatchMethod() == DocumentMatchMethod::BINARY;
@@ -490,7 +504,7 @@ void XtreaderActivity::doManifestSync() {
   heartbeatInfo.lastSyncStatus = result.ok ? "ok" : "failed";
   const telemetry::TelemetryResult heartbeatResult = telemetry::sendHeartbeat(heartbeatInfo);
   if (!heartbeatResult.ok) {
-    LOG_DBG("SYNCSET", "Heartbeat piggybacked on Sync Now failed (error=%s status=%d) -- diagnostics only",
+    LOG_DBG("XTRA", "Heartbeat piggybacked on Sync Now failed (error=%s status=%d) -- diagnostics only",
             heartbeatResult.error.c_str(), heartbeatResult.httpStatus);
   }
 
