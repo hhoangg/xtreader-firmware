@@ -339,9 +339,10 @@ bool ActivityManager::readerHasUnsyncedProgress() const {
   });
 }
 
-bool ActivityManager::captureReaderProgressForSleep(KOReaderProgress& outProgress) {
+bool ActivityManager::captureReaderProgressForSleep(KOReaderProgress& outProgress,
+                                                    SyncedPositionMarker::Receipt& outReceipt) {
   if (currentActivity && currentActivity->isReaderActivity()) {
-    return currentActivity->captureProgressForSleep(outProgress);
+    return currentActivity->captureProgressForSleep(outProgress, outReceipt);
   }
   // Only reachable if the reader is paused behind e.g. its own menu; safe to
   // reach into it here because enterDeepSleep() always calls goToSleep()
@@ -350,7 +351,7 @@ bool ActivityManager::captureReaderProgressForSleep(KOReaderProgress& outProgres
   // stacked reader is never resumed.
   const auto it = std::find_if(stackActivities.begin(), stackActivities.end(),
                                [](const auto& activity) { return activity->isReaderActivity(); });
-  return it != stackActivities.end() && (*it)->captureProgressForSleep(outProgress);
+  return it != stackActivities.end() && (*it)->captureProgressForSleep(outProgress, outReceipt);
 }
 
 bool ActivityManager::handleForcedRefresh() { return currentActivity && currentActivity->handleForcedRefresh(); }

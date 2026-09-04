@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "activities/Activity.h"
 #include "components/OptionPopup.h"
@@ -21,8 +22,14 @@ class ConfirmationActivity : public Activity {
   const int spacing = 30;
   const int fontId = UI_10_FONT_ID;
 
+  // Headings are short questions, so one truncated line is right for them.
+  // Bodies are not: a detail line can carry a chapter title of any length,
+  // and truncating it hides the very thing the reader is deciding about --
+  // hence wrappedText() rather than truncatedText() below.
+  static constexpr int MAX_BODY_LINES = 3;
+
   std::string safeHeading;
-  std::string safeBody;
+  std::vector<std::string> bodyLines;
   OptionPopup confirmPopup;
   int startY = 0;
   int lineHeight = 0;

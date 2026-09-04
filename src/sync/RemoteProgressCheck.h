@@ -19,8 +19,9 @@
  * Every failure is silent by design: no Wi-Fi, low heap, no credentials, no
  * row on the server, a timeout, an auth error -- all of them end as "nothing
  * to say" and the reader is never told. The only visible outcome is the
- * dialog EpubReaderActivity raises when the answer is both foreign and far
- * away (lib/KOReaderSync/RemoteProgressPolicy.h decides which).
+ * dialog EpubReaderActivity raises when the answer came from another device
+ * and names a chapter this one is not in
+ * (lib/KOReaderSync/RemoteProgressPolicy.h decides which).
  *
  * The heap gate is the real constraint, not the task plumbing: a reading
  * session leaves ~50 KB free and KOReaderSyncClient refuses a handshake below

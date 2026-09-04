@@ -29,7 +29,7 @@ void ConfirmationActivity::onEnter() {
     safeHeading = renderer.truncatedText(fontId, heading.c_str(), maxWidth, EpdFontFamily::BOLD);
   }
   if (!body.empty()) {
-    safeBody = renderer.truncatedText(fontId, body.c_str(), maxWidth, EpdFontFamily::REGULAR);
+    bodyLines = renderer.wrappedText(fontId, body.c_str(), maxWidth, MAX_BODY_LINES, EpdFontFamily::REGULAR);
   }
 
   // Text sits in the upper part of the screen so the confirmation popup
@@ -40,7 +40,10 @@ void ConfirmationActivity::onEnter() {
   for (int i = 0; i < optionCount; i++) {
     options[i] = I18N.get(optionLabels[i]);
   }
-  confirmPopup.show(safeHeading.c_str(), options, optionCount, 0, [this](int idx) {
+  // No caption inside the popup: the heading is already drawn above it at the
+  // full screen width, where it fits. Repeating it in the dialog only got it
+  // truncated a second time against the narrower popup.
+  confirmPopup.show("", options, optionCount, 0, [this](int idx) {
     ActivityResult res{ConfirmationResult{idx}};
     // Index 0 is always Cancel by convention (see the header); this keeps
     // isCancelled meaningful for every existing 2-arg caller that only
@@ -65,8 +68,9 @@ void ConfirmationActivity::render(RenderLock&& lock) {
   }
 
   // Draw Body
-  if (!safeBody.empty()) {
-    renderer.drawCenteredText(fontId, currentY, safeBody.c_str(), true, EpdFontFamily::REGULAR);
+  for (const auto& line : bodyLines) {
+    renderer.drawCenteredText(fontId, currentY, line.c_str(), true, EpdFontFamily::REGULAR);
+    currentY += lineHeight;
   }
 
   if (confirmPopup.processRender(renderer, mappedInput)) return;

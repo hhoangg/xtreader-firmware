@@ -46,6 +46,7 @@
 #include "fontIds.h"
 #include "images/LoadingIcon.h"
 #include "network/HttpDownloader.h"
+#include "platform/UsbSerialJtagHandoff.h"
 #include "sync/BookDownloader.h"
 #include "sync/BookServerDelete.h"
 #include "sync/DownloadQueue.h"
@@ -54,7 +55,6 @@
 #include "sync/SyncManifest.h"
 #include "sync/Telemetry.h"
 #include "sync/WallpaperSync.h"
-#include "platform/UsbSerialJtagHandoff.h"
 #include "util/ButtonNavigator.h"
 #include "util/ScreenshotUtil.h"
 #include "util/StringUtils.h"
@@ -299,7 +299,11 @@ void enterDeepSleep(bool fromTimeout = false) {
   const bool wantsProgressSync = sync_trigger::shouldSyncBeforeSleep(pairedForProgressSync, wasReaderActivity,
                                                                      activityManager.readerHasUnsyncedProgress());
   KOReaderProgress capturedProgress;
-  const bool haveProgressToSync = wantsProgressSync && activityManager.captureReaderProgressForSleep(capturedProgress);
+  // Records, once the upload is acknowledged, what the next boot's sync
+  // baseline should be -- see activities/reader/SyncedPositionMarker.h.
+  SyncedPositionMarker::Receipt capturedReceipt;
+  const bool haveProgressToSync =
+      wantsProgressSync && activityManager.captureReaderProgressForSleep(capturedProgress, capturedReceipt);
 
   const bool isQuickResumeSleep =
       SETTINGS.sleepScreen == CrossPointSettings::SLEEP_SCREEN_MODE::QUICK_RESUME ||
@@ -337,7 +341,7 @@ void enterDeepSleep(bool fromTimeout = false) {
   // SleepProgressSync.cpp's powerButtonPressedAgain()) so a slow or stuck
   // attempt can never make the device feel unable to turn off.
   if (haveProgressToSync) {
-    sleep_progress_sync::trySyncBeforeSleep(capturedProgress);
+    sleep_progress_sync::trySyncBeforeSleep(capturedProgress, capturedReceipt);
   }
 
   // Tear down WiFi so the modem power domain isn't held alive across deep sleep.
@@ -1619,8 +1623,9 @@ static void testConsoleSleepSync() {
 
   if (shouldSync) {
     KOReaderProgress progress;
-    if (activityManager.captureReaderProgressForSleep(progress)) {
-      const bool sent = sleep_progress_sync::trySyncBeforeSleep(progress);
+    SyncedPositionMarker::Receipt receipt;
+    if (activityManager.captureReaderProgressForSleep(progress, receipt)) {
+      const bool sent = sleep_progress_sync::trySyncBeforeSleep(progress, receipt);
       logSerial.printf("[TEST] {\"stage\":\"sleep_sync_result\",\"sent\":%s}\n", sent ? "true" : "false");
     } else {
       logSerial.println("[TEST] {\"stage\":\"sleep_sync_result\",\"sent\":false,\"reason\":\"capture_failed\"}");
@@ -1655,8 +1660,9 @@ static void testConsoleSleepSyncBench() {
 
   if (shouldSync) {
     KOReaderProgress progress;
-    if (activityManager.captureReaderProgressForSleep(progress)) {
-      const bool sent = sleep_progress_sync::benchTrySyncAgainstBogusNetwork(progress);
+    SyncedPositionMarker::Receipt receipt;
+    if (activityManager.captureReaderProgressForSleep(progress, receipt)) {
+      const bool sent = sleep_progress_sync::benchTrySyncAgainstBogusNetwork(progress, receipt);
       logSerial.printf("[TEST] {\"stage\":\"sleep_sync_bench_result\",\"sent\":%s}\n", sent ? "true" : "false");
     } else {
       logSerial.println("[TEST] {\"stage\":\"sleep_sync_bench_result\",\"sent\":false,\"reason\":\"capture_failed\"}");
@@ -1694,8 +1700,9 @@ static void testConsoleCaptivePortalBench() {
 
   if (shouldSync) {
     KOReaderProgress progress;
-    if (activityManager.captureReaderProgressForSleep(progress)) {
-      const bool sent = sleep_progress_sync::benchTrySyncAgainstBlackHole(progress);
+    SyncedPositionMarker::Receipt receipt;
+    if (activityManager.captureReaderProgressForSleep(progress, receipt)) {
+      const bool sent = sleep_progress_sync::benchTrySyncAgainstBlackHole(progress, receipt);
       logSerial.printf("[TEST] {\"stage\":\"captive_portal_bench_result\",\"sent\":%s}\n", sent ? "true" : "false");
     } else {
       logSerial.println(

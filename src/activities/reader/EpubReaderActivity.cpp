@@ -38,9 +38,11 @@
 #include "ReaderToolbarUi.h"
 #include "ReaderUtils.h"
 #include "RecentBooksStore.h"
+#include "RemoteProgressMarker.h"
 #include "RemoteProgressPolicy.h"
 #include "SdCardFontSystem.h"
 #include "SyncCredentialStore.h"
+#include "SyncedPositionMarker.h"
 #include "activities/settings/TextSettingsActivity.h"
 #include "activities/util/ConfirmationActivity.h"
 #include "components/UITheme.h"
@@ -244,11 +246,20 @@ bool EpubReaderActivity::loadBook() {
 
   loadCachedBookmarks();
 
-  // Baseline for hasUnsyncedProgress() -- see its header comment. Captured
-  // after the text-reference redirect above so a fresh book's initial jump
-  // does not itself count as "unsynced".
-  syncBaselineSpineIndex = currentSpineIndex;
-  syncBaselinePage = nextPageNumber;
+  // Baseline for hasUnsyncedProgress() -- see its header comment. The last
+  // position the server acknowledged, when there is one: sleep is a full chip
+  // reset, so a baseline taken from where the book resumed would forget every
+  // push that failed. Read after the text-reference redirect above so a fresh
+  // book's initial jump does not itself count as "unsynced". See
+  // SyncedPositionMarker.h, including why the marker-absent case must keep
+  // falling back to the current position.
+  {
+    const SyncedPositionMarker::Position current{currentSpineIndex, nextPageNumber};
+    const SyncedPositionMarker::Position baseline =
+        SyncedPositionMarker::baselineFor(SyncedPositionMarker::load(epub->getCachePath()), current);
+    syncBaselineSpineIndex = baseline.spineIndex;
+    syncBaselinePage = baseline.pageNumber;
+  }
 
   // Same document id the before-sleep push uses (see
   // captureProgressForSleep()), picked the same way: asking under a different
@@ -784,15 +795,6 @@ void EpubReaderActivity::applyProgressChange(const ProgressChangeResult& sync) {
 void EpubReaderActivity::pollRemoteProgress() {
   if (remoteProgressPromptDone || remoteProgressDocumentHash.empty() || !epub) return;
 
-  // Wait for a section with a page count before consuming anything. Without
-  // one there is no chapter progress to compare against, and treating that as
-  // 0 would place a reader deep in a long chapter at its first page -- easily
-  // more than the policy's 1% threshold away from a remote position that is
-  // in fact the same place. Deliberately before consume(): the result stays
-  // pending and is picked up on a later tick, and remoteProgressPromptDone
-  // stays false so the prompt is not lost.
-  if (!section || section->estimatedTotalPages() == 0) return;
-
   KOReaderProgress remote;
   bool haveRemote = false;
   if (!remote_progress::consume(remoteProgressDocumentHash, remote, haveRemote)) return;
@@ -800,20 +802,56 @@ void EpubReaderActivity::pollRemoteProgress() {
   // Whatever happens below, this fetch is spent: one answer, one decision.
   remoteProgressPromptDone = true;
 
-  const float chapterProgress =
-      static_cast<float>(section->currentPage) / static_cast<float>(section->estimatedTotalPages());
-  const float localPercentage = epub->calculateProgress(currentSpineIndex, chapterProgress);
-
   remote_progress_policy::Input decision;
   decision.haveRemote = haveRemote;
-  decision.remotePercentage = remote.percentage;
   decision.remoteDeviceId = remote.deviceId;
   decision.selfDeviceId = SYNC_STORE.getDeviceId();
-  decision.localPercentage = localPercentage;
+  decision.remoteProgress = remote.progress;
+  // Spine index is 0-based; the policy converts from DocFragment's 1-based
+  // chapter number on its side.
+  decision.localSpineIndex = currentSpineIndex;
+  decision.remoteTimestamp = remote.timestamp;
+  // Read only on the one tick that has an answer to judge -- an open whose
+  // fetch found nothing pays no SD read for this at all.
+  if (haveRemote) decision.resolvedTimestamp = RemoteProgressMarker::load(epub->getCachePath());
 
   if (remote_progress_policy::decide(decision) != remote_progress_policy::Decision::Prompt) return;
 
-  const int remotePercent = static_cast<int>(remote.percentage * 100.0f + 0.5f);
+  // Names the place from cached metadata only: getTocItem reads the book.bin
+  // this reader already has open, so no spine item is loaded and no HTML is
+  // parsed on the way to the dialog.
+  //
+  // The TOC title goes out verbatim and no number is computed. Three
+  // different numbers describe one position and only one of them is on the
+  // other device's screen: DocFragment[N] is a *spine item* index (it counts
+  // the cover, the TOC page, the foreword and the colophon, and one logical
+  // chapter can span several items), the TOC entry's own ordinal is a second
+  // thing, and the number the book prints in its chapter heading is a third.
+  // The observed row makes the point: fragment 441, TOC entry 440, and the
+  // Kindle showing 438. Whatever the book calls this chapter is already
+  // inside the title string, so prefixing an ordinal onto it only adds a
+  // number the reader can compare against the other device and find wrong --
+  // which invites them to distrust a jump that is in fact correct.
+  //
+  // The spine index is still exactly the right thing for the *gate* to
+  // compare, because both sides mean the same spine there. Shown and compared
+  // are deliberately different quantities; making them agree is a regression,
+  // not a cleanup.
+  //
+  // With no usable TOC entry there is nothing honest to show, so the dialog
+  // drops the field entirely and uses the no-chapter form.
+  std::string chapterTitle;
+  const int remoteChapter = remote_progress_policy::chapterFromProgress(remote.progress);
+  if (remoteChapter != remote_progress_policy::UNKNOWN_CHAPTER) {
+    const int remoteSpineIndex = remoteChapter - 1;
+    if (remoteSpineIndex < epub->getSpineItemsCount()) {
+      const int tocIndex = epub->getTocIndexForSpineIndex(remoteSpineIndex);
+      if (tocIndex >= 0 && tocIndex < epub->getTocItemsCount()) {
+        chapterTitle = epub->getTocItem(tocIndex).title;
+      }
+    }
+  }
+
   // The device has no clock, but the server stamped this instant, so the date
   // is a fact that travelled with the row. SETTINGS.clockUtcOffsetQ is the
   // biased quarter-hour offset HalClock::formatTime already uses (48 = UTC).
@@ -825,29 +863,50 @@ void EpubReaderActivity::pollRemoteProgress() {
           : std::string();
   const std::string deviceName = remote.device.empty() ? std::string("?") : remote.device;
 
-  char detail[160];
-  snprintf(detail, sizeof(detail), tr(STR_SYNC_REMOTE_POSITION_DETAIL), deviceName.c_str(),
-           remotePercent < 0     ? 0
-           : remotePercent > 100 ? 100
-                                 : remotePercent,
-           when.c_str());
+  // Chapter first, context after: the title is what the reader decides on,
+  // and it is the field that must survive intact if the line has to wrap.
+  char detail[192];
+  if (!chapterTitle.empty()) {
+    snprintf(detail, sizeof(detail), tr(STR_SYNC_REMOTE_POSITION_DETAIL), chapterTitle.c_str(), deviceName.c_str(),
+             when.c_str());
+  } else {
+    // Nothing in the row named a chapter, which still prompts -- an unknown
+    // position is exactly when the reader most needs the choice. A hole in
+    // the middle of the three-field format would leave a stranded separator,
+    // so that case gets its own string.
+    snprintf(detail, sizeof(detail), tr(STR_SYNC_REMOTE_POSITION_DETAIL_NO_CHAPTER), deviceName.c_str(), when.c_str());
+  }
   // The date is the last field of the format string in every translation, so
-  // dropping it leaves a dangling separator behind the percentage.
-  size_t detailLen = strlen(detail);
-  while (detailLen > 0 && (detail[detailLen - 1] == ' ' || detail[detailLen - 1] == '-')) {
-    detail[--detailLen] = '\0';
+  // an unstamped row leaves a dangling separator behind the device name.
+  // Trimmed only in that case: a chapter title can legitimately end in a dash.
+  if (when.empty()) {
+    size_t detailLen = strlen(detail);
+    while (detailLen > 0 && (detail[detailLen - 1] == ' ' || detail[detailLen - 1] == '-')) {
+      detail[--detailLen] = '\0';
+    }
   }
 
   const StrId options[] = {StrId::STR_SYNC_KEEP_LOCAL_POSITION, StrId::STR_SYNC_GO_TO_REMOTE_POSITION};
   startActivityForResult(std::make_unique<ConfirmationActivity>(renderer, mappedInput,
                                                                 tr(STR_SYNC_REMOTE_POSITION_FOUND), detail, options, 2),
                          [this, remote](const ActivityResult& result) {
-                           // Index 0 is Cancel by OptionPopup's convention --
-                           // "Stay here" does nothing at all: no write, no
-                           // upload, no second prompt.
-                           if (result.isCancelled) return;
-                           const auto& choice = std::get<ConfirmationResult>(result.data);
-                           if (choice.selectedIndex != 1) return;
+                           // Answered, whichever way: record the row so the
+                           // next open of this book does not raise the same
+                           // question again. Declining has to write too --
+                           // forgetting a decline is what made this dialog
+                           // reappear on every open.
+                           if (epub) RemoteProgressMarker::save(epub->getCachePath(), remote.timestamp);
+                           // Index 0 is Cancel by OptionPopup's convention.
+                           // "Stay here" moves nothing on screen, so the
+                           // before-sleep push has to be forced or this
+                           // reader's deliberate choice never leaves the
+                           // device -- see remoteProgressDeclined.
+                           const auto* choice =
+                               result.isCancelled ? nullptr : &std::get<ConfirmationResult>(result.data);
+                           if (choice == nullptr || choice->selectedIndex != 1) {
+                             remoteProgressDeclined = true;
+                             return;
+                           }
                            jumpToRemotePosition(remote);
                          });
 }
@@ -1069,6 +1128,7 @@ unsigned long EpubReaderActivity::confirmLongPressThreshold() const {
 
 bool EpubReaderActivity::hasUnsyncedProgress() const {
   if (!epub) return false;
+  if (remoteProgressDeclined) return true;
   const int currentPage = section ? section->currentPage : nextPageNumber;
   return currentSpineIndex != syncBaselineSpineIndex || currentPage != syncBaselinePage;
 }
@@ -1083,7 +1143,8 @@ bool EpubReaderActivity::hasUnsyncedProgress() const {
 // and is no longer this method's job. Never touches WiFi or the network;
 // the epub is also left alone here (not released early) since goToSleep()
 // destroys this activity immediately after, which frees it anyway.
-bool EpubReaderActivity::captureProgressForSleep(KOReaderProgress& outProgress) {
+bool EpubReaderActivity::captureProgressForSleep(KOReaderProgress& outProgress,
+                                                 SyncedPositionMarker::Receipt& outReceipt) {
   if (!epub || !hasUnsyncedProgress()) return false;
   if (!KOREADER_STORE.hasEffectiveCredentials()) return false;
 
@@ -1148,6 +1209,13 @@ bool EpubReaderActivity::captureProgressForSleep(KOReaderProgress& outProgress) 
   if (!saveProgress(currentSpineIndex, currentPage, totalPages)) {
     LOG_ERR("KOSync", "Sleep sync: failed to save progress to disk, capturing payload anyway");
   }
+
+  // Stamped only once the upload is acknowledged, by the network half that
+  // learns the outcome (src/sync/SleepProgressSync.cpp). A failed push must
+  // leave the marker holding the older position, which is exactly what makes
+  // the next boot notice there is still something to send.
+  outReceipt.cachePath = epub->getCachePath();
+  outReceipt.position = {currentSpineIndex, currentPage};
 
   outProgress = std::move(progress);
   return true;

@@ -205,11 +205,6 @@ class ParagraphStreamer final : public Print {
   size_t entityLen = 0;
   bool prevCR = false;  // last counted visible byte was a CR (XML line-ending normalization)
 
-  // Forward mode: count <p> paragraphs at a byte offset (legacy, used by generateXPath)
-  size_t fwdTarget;
-  int fwdResult = 0;
-  bool fwdCaptured = false;
-
   // Reverse mode shared state
   int revChar;
   bool revPFound = false;
@@ -641,19 +636,14 @@ class ParagraphStreamer final : public Print {
   }
 
  public:
-  explicit ParagraphStreamer(size_t targetByte) : fwdTarget(targetByte), revChar(0) {
-    memset(stepEnteredAtDepth, -1, sizeof(stepEnteredAtDepth));
-  }
-
   ParagraphStreamer(int paragraph, int charOff, int textNodeIdx = 1)
-      : fwdTarget(SIZE_MAX), revChar(charOff), revParagraph(paragraph), targetTextNode(textNodeIdx) {
+      : revChar(charOff), revParagraph(paragraph), targetTextNode(textNodeIdx) {
     memset(stepEnteredAtDepth, -1, sizeof(stepEnteredAtDepth));
   }
 
   ParagraphStreamer(const XPathStep* xpathSteps, int xpathStepCount, int charOff, int textNodeIdx = 1,
                     bool relaxFirstStep = false)
-      : fwdTarget(SIZE_MAX),
-        revChar(charOff),
+      : revChar(charOff),
         steps(xpathSteps),
         stepCount(xpathStepCount),
         targetTextNode(textNodeIdx),
@@ -662,15 +652,11 @@ class ParagraphStreamer final : public Print {
   }
 
   ParagraphStreamer(bool resolveBodyText, int charOff, int textNodeIdx)
-      : fwdTarget(SIZE_MAX), revChar(charOff), targetTextNode(textNodeIdx), targetBodyText(resolveBodyText) {
+      : revChar(charOff), targetTextNode(textNodeIdx), targetBodyText(resolveBodyText) {
     memset(stepEnteredAtDepth, -1, sizeof(stepEnteredAtDepth));
   }
 
   size_t write(uint8_t c) override {
-    if (!fwdCaptured && bytesWritten >= fwdTarget) {
-      fwdResult = pCount;
-      fwdCaptured = true;
-    }
     bytesWritten++;
 
     if (globalInEntity) {
@@ -750,7 +736,6 @@ class ParagraphStreamer final : public Print {
     return size;
   }
 
-  int paragraphCount() const { return fwdCaptured ? fwdResult : pCount; }
   int getParagraphAtMatch() const { return paragraphAtMatch; }
   int getListItemAtMatch() const { return liCountAtMatch; }
   const char* getCapturedAnchorId() const { return capturedAnchorIdLen > 0 ? capturedAnchorId : nullptr; }
@@ -772,21 +757,62 @@ bool streamSpine(const std::shared_ptr<Epub>& epub, int spineIndex, ParagraphStr
 SavedProgressPosition ProgressMapper::toSavedProgress(const std::shared_ptr<Epub>& epub,
                                                       const CrossPointPosition& pos) {
   SavedProgressPosition result;
+  // The page fraction. It is a whole page wide, which is why it is the LAST anchor tried
+  // and not the first: rounding a page boundary is what landed a receiving device one
+  // page early and made the reader tap forward.
   float intra =
       (pos.totalPages > 1) ? static_cast<float>(pos.pageNumber) / static_cast<float>(pos.totalPages - 1) : 0.0f;
-  result.percentage = epub->calculateProgress(pos.spineIndex, intra);
-  if (pos.hasParagraphIndex && pos.paragraphIndex > 0) {
-    result.xpath = ChapterXPathResolver::findXPathForParagraph(epub, pos.spineIndex, pos.paragraphIndex);
+
+  // 1. The exact visible-codepoint offset pagination stamped on this page. The only
+  //    anchor here that names a character rather than a region.
+  if (pos.hasVisibleTextOffset) {
+    float offsetIntra = -1.0f;
+    result.xpath = ChapterXPathResolver::findXPathForOffset(epub, pos.spineIndex, pos.visibleTextOffset, &offsetIntra);
+    if (result.xpath.empty()) {
+      LOG_DBG("PM",
+              "toSaved: offset=%u (0-based, body-visible incl. whitespace) in spine %d (0-based) did not resolve; "
+              "falling back",
+              static_cast<unsigned>(pos.visibleTextOffset), pos.spineIndex);
+    } else {
+      // Percentage and XPath now come from the same anchor. Deriving the XPath from the
+      // offset while the percentage still came from the page fraction let the two
+      // disagree about where the reader was.
+      if (offsetIntra >= 0.0f) {
+        intra = offsetIntra;
+      }
+      LOG_DBG("PM",
+              "toSaved: offset=%u (0-based, body-visible incl. whitespace) in spine %d (0-based) -> intra=%.4f "
+              "(intra-chapter fraction) %s",
+              static_cast<unsigned>(pos.visibleTextOffset), pos.spineIndex, static_cast<double>(intra),
+              result.xpath.c_str());
+    }
   }
-  // Fall back to progress-based XPath, then synthetic progress mapping.
+
+  // 2. The paragraph LUT. A whole paragraph wide, but structurally exact.
+  if (result.xpath.empty() && pos.hasParagraphIndex && pos.paragraphIndex > 0) {
+    result.xpath = ChapterXPathResolver::findXPathForParagraph(epub, pos.spineIndex, pos.paragraphIndex);
+    LOG_DBG("PM", "toSaved: paragraph=%u (1-based) in spine %d (0-based) -> %s", pos.paragraphIndex, pos.spineIndex,
+            result.xpath.empty() ? "(unresolved)" : result.xpath.c_str());
+  }
+
+  // 3. The page fraction, then 4. the fragment-base floor. These two are what run when
+  //    the section LUT is missing entirely, so neither may be removed.
   if (result.xpath.empty()) {
     result.xpath = ChapterXPathResolver::findXPathForProgress(epub, pos.spineIndex, intra);
+    LOG_DBG("PM", "toSaved: intra=%.4f (intra-chapter fraction) in spine %d (0-based) -> %s",
+            static_cast<double>(intra), pos.spineIndex, result.xpath.empty() ? "(unresolved)" : result.xpath.c_str());
   }
   if (result.xpath.empty()) {
     result.xpath = generateXPath(epub, pos.spineIndex, intra);
+    LOG_DBG("PM", "toSaved: fell through to the fragment base for spine %d (0-based) -> %s", pos.spineIndex,
+            result.xpath.c_str());
   }
-  LOG_DBG("PM", "-> Progress: spine=%d page=%d/%d %.2f%% %s", pos.spineIndex, pos.pageNumber, pos.totalPages,
-          static_cast<double>(result.percentage * 100), result.xpath.c_str());
+
+  result.percentage = epub->calculateProgress(pos.spineIndex, intra);
+  // Frames spelled out: spine and page are 0-based (the UI adds one to the page), the
+  // page count is a count, and the percentage is whole-book, not intra-chapter.
+  LOG_DBG("PM", "-> Progress: spine=%d (0-based) page=%d (0-based) of %d %.2f%% (whole book) %s", pos.spineIndex,
+          pos.pageNumber, pos.totalPages, static_cast<double>(result.percentage * 100), result.xpath.c_str());
   return result;
 }
 
@@ -1058,17 +1084,20 @@ CrossPointPosition ProgressMapper::toCrossPoint(const std::shared_ptr<Epub>& epu
   return result;
 }
 
+// Last resort, reached only when both expat passes in ChapterXPathResolver return "".
+//
+// This used to append "/p[K]", with K the number of <p> opened before the byte offset
+// intra maps to. That form asserts the paragraph is a DIRECT child of the fragment
+// body, which is false for most real EPUBs -- the book that exposed this has one <div>
+// under <body> and all 74 <p> at depth 4, so "/body/DocFragment[442]/body/p[8]" matched
+// no node at all and the receiving device jumped to page 1. It is worse than imprecise:
+// it is unresolvable, and it fails silently while looking well-formed.
+//
+// A last resort must degrade to "top of the right chapter", never to a path that cannot
+// resolve. Do not reintroduce the "/p[K]" suffix; without the real ancestry (which is
+// what ChapterXPathResolver exists to recover) the index cannot be placed correctly.
 std::string ProgressMapper::generateXPath(const std::shared_ptr<Epub>& epub, int spineIndex, float intra) {
-  const std::string base = "/body/DocFragment[" + std::to_string(spineIndex + 1) + "]/body";
-  if (intra <= 0.0f) return base;
-
-  size_t spineSize = 0;
-  const auto href = epub->getSpineItem(spineIndex).href;
-  if (href.empty() || !epub->getItemSize(href, &spineSize) || spineSize == 0) return base;
-
-  ParagraphStreamer s(static_cast<size_t>(spineSize * std::min(intra, 1.0f)));
-  if (!streamSpine(epub, spineIndex, s)) return base;
-
-  const int p = s.paragraphCount();
-  return (p > 0) ? base + "/p[" + std::to_string(p) + "]" : base;
+  (void)epub;
+  (void)intra;
+  return "/body/DocFragment[" + std::to_string(spineIndex + 1) + "]/body";
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 // Pure decision for "the server has a position for this book -- do we
@@ -11,16 +12,24 @@
 // them arrives.
 //
 // The constraints this encodes:
-//  - Silence is the default. Every uncertain case resolves to Ignore
-//    except an unidentified remote row (see below), because a dialog the
-//    reader did not need is worse than a jump they can still make by hand
-//    from the reader menu.
 //  - Progress this device uploaded itself is never worth a prompt. That is
 //    the only reason selfDeviceId exists.
-//  - This device has no clock, and the local position carries no timestamp
-//    (progress.bin holds spine/page/pageCount/offset and nothing else), so
-//    "which one is newer" is not answerable here. Position is what gets
-//    compared, and the reader arbitrates.
+//  - The gate is the chapter, never the percentage. The two sides do not
+//    measure the same thing: KOReader's default page mode returns
+//    current_page / number_of_pages, which moves with font, margins, line
+//    spacing and embedded CSS, while this device derives a byte fraction
+//    from Epub::calculateProgress. Comparing them is a systematic
+//    multi-percent offset, not noise -- it made every later open of an
+//    already-resolved book ask again. The xpath's DocFragment index is
+//    accurate in both of KOReader's view modes, and reading it costs no
+//    chapter decompression, so it is what decides.
+//  - An unreadable chapter biases toward asking, not toward silence. A
+//    missed prompt strands the reader at the wrong place with no clue why;
+//    an extra prompt is one button press.
+//  - This device has no clock, so "which position is newer" is not
+//    answerable here. What is answerable is "have we already been asked
+//    about this exact row", because the server stamps the row -- hence
+//    resolvedTimestamp, which is stored and compared, never interpreted.
 namespace remote_progress_policy {
 
 // Every CrossPoint reader sent this literal as its `device_id` before
@@ -31,28 +40,49 @@ namespace remote_progress_policy {
 // backfill.
 constexpr char LEGACY_DEVICE_ID[] = "crosspoint-reader";
 
-// How far apart two positions must be before the difference is real.
-// One percent is roughly two or three pages in a 300-page book. Both sides
-// derive percentage from byte offsets independently -- KOReader from its own
-// document model, this device from Epub::calculateProgress -- so a tighter
-// threshold prompts on rounding rather than on a reader who actually moved.
-constexpr float PROMPT_THRESHOLD = 0.01f;
+// No chapter could be read out of the remote row's `progress` string.
+// Chapters are 1-based, matching KOReader's DocFragment index, so zero is
+// free to mean "unknown".
+constexpr int UNKNOWN_CHAPTER = 0;
+
+// Chapter named by a KOReader `progress` string, 1-based, or UNKNOWN_CHAPTER.
+// Subtract one to compare it against a spine index.
+//
+// The shapes this has to survive, measured across the .sdr files of one
+// ordinary Kindle:
+//   /body/DocFragment[N]/...   EPUB, the expected shape          -> N
+//   /body/DocFragment/...      single-fragment EPUB, no index    -> 1
+//   /FictionBook/body/...      FB2, no DocFragment at all        -> unknown
+//   /html/body/..., /html[2]/body/...   HTML/TXT                 -> unknown
+//   "173"                      PDF/DJVU page number, not a path  -> unknown
+// Only the first two are reachable with the same document hash as an EPUB,
+// but a wrong guess here is a silent misfire, so the rest are rejected
+// explicitly rather than left to fall out of the parse.
+int chapterFromProgress(const std::string& progress);
 
 struct Input {
   // False when the fetch failed, was skipped, or the server had no row --
   // RemoteProgressCheck collapses all of those into one "nothing to say".
   bool haveRemote = false;
-  // Server's percentage for this document, 0..1.
-  float remotePercentage = 0.0f;
   // `device_id` as the server returned it. Empty means the client that wrote
   // the row never sent one.
   std::string remoteDeviceId;
   // This device's own id, from SYNC_STORE.getDeviceId(). Empty on an
   // unpaired device, which cannot reach this code anyway.
   std::string selfDeviceId;
-  // Where this device currently is in the book, 0..1, from
-  // Epub::calculateProgress.
-  float localPercentage = 0.0f;
+  // The row's `progress` field verbatim -- a KOReader xpointer for a
+  // reflowable format, a bare page number for a paged one.
+  std::string remoteProgress;
+  // Where this device currently is, as a spine index. 0-based, where
+  // DocFragment is 1-based.
+  int localSpineIndex = 0;
+  // The server's `timestamp` for this row, and the newest one this document
+  // has already been answered about (RemoteProgressMarker, 0 when never).
+  // A row at or below the marker has been resolved once already; a
+  // genuinely newer position from the other device is above it and still
+  // prompts.
+  int64_t remoteTimestamp = 0;
+  int64_t resolvedTimestamp = 0;
 };
 
 enum class Decision { Ignore, Prompt };

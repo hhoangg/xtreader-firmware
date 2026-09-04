@@ -170,7 +170,7 @@ void noteNetworkReached() {
   saveWifiBackoffState(sleep_wifi_backoff::afterAttempt(loadWifiBackoffState(), /*reached=*/true));
 }
 
-bool trySyncBeforeSleep(const KOReaderProgress& progress) {
+bool trySyncBeforeSleep(const KOReaderProgress& progress, const SyncedPositionMarker::Receipt& receipt) {
 #ifdef CP_TEST_CONSOLE
   logHeapJson("start");
   const unsigned long overallStart = millis();
@@ -242,6 +242,16 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 #endif
   LOG_DBG("SLPSYNC", "Before-sleep sync %s", sent ? "sent" : "failed");
 
+  // The one moment the server's acknowledgement is known. Stamping the book's
+  // marker here -- and only here -- is what makes the next boot's sync
+  // baseline the last *acknowledged* position rather than wherever the book
+  // happens to resume, so a push that failed is retried instead of silently
+  // forgotten. One 8-byte SD write per successful sleep sync, on a path that
+  // is already doing TLS, and outside the upload stage timer above so it does
+  // not distort CMD:SLEEPSYNC's numbers. Nothing is written when the upload
+  // failed -- that is what makes the next boot retry.
+  if (sent) SyncedPositionMarker::save(receipt.cachePath, receipt.position);
+
   // NETWORK_ERROR specifically -- not just "sent != OK" -- is the signal
   // that Wi-Fi associated but nothing behind it actually answered (a
   // captive portal or black-holed server). Any other outcome (AUTH_FAILED,
@@ -291,20 +301,20 @@ bool trySyncBeforeSleep(const KOReaderProgress& progress) {
 }
 
 #ifdef CP_TEST_CONSOLE
-bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress) {
+bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress, const SyncedPositionMarker::Receipt& receipt) {
   benchForceBogusNetwork = true;
-  const bool sent = trySyncBeforeSleep(progress);
+  const bool sent = trySyncBeforeSleep(progress, receipt);
   benchForceBogusNetwork = false;
   return sent;
 }
 
-bool benchTrySyncAgainstBlackHole(const KOReaderProgress& progress) {
+bool benchTrySyncAgainstBlackHole(const KOReaderProgress& progress, const SyncedPositionMarker::Receipt& receipt) {
   // Real saved Wi-Fi (benchForceBogusNetwork stays false), so association
   // succeeds normally -- only the KOSync upload target is diverted, standing
   // in for a captive portal or a server that accepted the TCP connection
   // and never answered. See KOReaderSyncClient::setTestBlackHoleOverride().
   KOReaderSyncClient::setTestBlackHoleOverride(true);
-  const bool sent = trySyncBeforeSleep(progress);
+  const bool sent = trySyncBeforeSleep(progress, receipt);
   KOReaderSyncClient::setTestBlackHoleOverride(false);
   return sent;
 }

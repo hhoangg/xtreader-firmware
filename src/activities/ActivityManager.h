@@ -17,6 +17,10 @@
 class Activity;           // forward declaration
 class RenderLock;         // forward declaration
 struct KOReaderProgress;  // forward declaration
+// forward declaration (see activities/reader/SyncedPositionMarker.h)
+namespace SyncedPositionMarker {
+struct Receipt;
+}
 
 enum class HomeMenuItem { NONE, FILE_BROWSER, RECENTS, FILE_TRANSFER, SETTINGS_MENU };
 
@@ -112,7 +116,7 @@ class ActivityManager {
   // Activity::captureProgressForSleep(). Must be called before goToSleep()
   // tears the reader down. No-ops (returns false) if no reader activity is
   // current or stacked.
-  bool captureReaderProgressForSleep(KOReaderProgress& outProgress);
+  bool captureReaderProgressForSleep(KOReaderProgress& outProgress, SyncedPositionMarker::Receipt& outReceipt);
   bool handleForcedRefresh();
   bool skipLoopDelay() const;
   ScreenshotInfo getScreenshotInfo() const;

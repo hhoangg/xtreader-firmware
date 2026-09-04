@@ -20,6 +20,7 @@
 // regardless of what happens here.
 #include "KOReaderSyncClient.h"
 #include "SleepWifiBackoffPolicy.h"
+#include "activities/reader/SyncedPositionMarker.h"
 
 namespace sleep_progress_sync {
 
@@ -54,12 +55,20 @@ constexpr unsigned long WIFI_CONNECT_TIMEOUT_MS = 2500;
 // successful ActivityManager::captureReaderProgressForSleep() first: this
 // function does not re-check pairing or dirtiness itself.
 //
+// `receipt` is the same capture's book cache directory and position (see
+// Activity::captureProgressForSleep()). It is written to SD as the book's
+// synced-position marker only once the upload comes back OK, so that a push
+// which fails leaves the older marker in place and the next boot retries
+// instead of believing it is in sync -- see
+// activities/reader/SyncedPositionMarker.h. An empty cachePath disables the
+// stamp; nothing else about this function depends on it.
+//
 // Returns true only once progress was actually confirmed sent. Logs free
 // heap and largest allocatable block before/after (as "[TEST]" JSON, gated
 // on CP_TEST_CONSOLE like every other on-device diagnostic in this
 // codebase) so the real worst-case memory cost is visible when built with
 // `pio run -e test`. Never logs a token or a sync key.
-bool trySyncBeforeSleep(const KOReaderProgress& progress);
+bool trySyncBeforeSleep(const KOReaderProgress& progress, const SyncedPositionMarker::Receipt& receipt);
 
 // Bounded Wi-Fi bring-up shared with trySyncBeforeSleep() above: tries the
 // last-connected saved network first (WifiCredentialStore), then every
@@ -137,7 +146,7 @@ void noteNetworkReached();
 // the real back-off state machine too. See main.cpp's
 // testConsoleSleepSyncBench() for the JSON this and trySyncBeforeSleep()'s
 // own [TEST] stage lines report.
-bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress);
+bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress, const SyncedPositionMarker::Receipt& receipt);
 
 // CMD:CAPTIVEPORTALBENCH -- runs the exact same trySyncBeforeSleep() above
 // against real, working Wi-Fi (association succeeds normally), but diverts
@@ -149,7 +158,7 @@ bool benchTrySyncAgainstBogusNetwork(const KOReaderProgress& progress);
 // KOReaderSyncClient::setTestBlackHoleOverride() and main.cpp's
 // testConsoleCaptivePortalBench() for the JSON this and
 // trySyncBeforeSleep()'s own [TEST] stage lines report.
-bool benchTrySyncAgainstBlackHole(const KOReaderProgress& progress);
+bool benchTrySyncAgainstBlackHole(const KOReaderProgress& progress, const SyncedPositionMarker::Receipt& receipt);
 #endif
 
 }  // namespace sleep_progress_sync

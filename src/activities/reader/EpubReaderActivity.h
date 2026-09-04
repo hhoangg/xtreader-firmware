@@ -61,6 +61,13 @@ class EpubReaderActivity final : public ReaderActivity {
   // One prompt per book open, whatever the reader answers. A second dialog
   // for the same fetch would be nagging, and there is only ever one fetch.
   bool remoteProgressPromptDone = false;
+  // Set when the reader answers "Stay here". Declining is a decision about
+  // where this reader is, but it moves nothing, so the load-time baseline
+  // still matches and hasUnsyncedProgress() would say there is nothing to
+  // send -- leaving the other device to go on believing its own position is
+  // the live one and to keep asking from its side. This forces the
+  // before-sleep push so the decision reaches the server once.
+  bool remoteProgressDeclined = false;
   // Toolbar reader menu (SETTINGS.readerMenuStyle == READER_MENU_TOOLBAR): drawn
   // over the page instead of pushing the full-screen list menu. Select opens the
   // Toolbar; its tools open the Contents/Text/More bottom-sheet panels.
@@ -228,5 +235,5 @@ class EpubReaderActivity final : public ReaderActivity {
   CrossPointPosition getCurrentPosition() const;
 
   bool hasUnsyncedProgress() const override;
-  bool captureProgressForSleep(KOReaderProgress& outProgress) override;
+  bool captureProgressForSleep(KOReaderProgress& outProgress, SyncedPositionMarker::Receipt& outReceipt) override;
 };

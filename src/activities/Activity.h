@@ -12,6 +12,7 @@
 #include "KOReaderSyncClient.h"  // for KOReaderProgress, captureProgressForSleep()'s out-param
 #include "MappedInputManager.h"
 #include "RenderLock.h"
+#include "reader/SyncedPositionMarker.h"  // for captureProgressForSleep()'s second out-param
 #include "util/ScreenshotInfo.h"
 
 class Activity {
@@ -67,8 +68,16 @@ class Activity {
   // position into outProgress and persists it to disk; does not touch the
   // network or WiFi. Returns true only when a payload was actually produced
   // (nothing to send, or no credentials, leaves outProgress untouched).
+  // `outReceipt` carries what the upload's success must be recorded against
+  // (the book's cache directory and the position being sent) so that a push
+  // that fails is retried instead of forgotten -- see
+  // reader/SyncedPositionMarker.h. It travels beside outProgress rather than
+  // inside it because KOReaderProgress is the KOSync wire payload and must
+  // not grow device-local bookkeeping.
   // Default no-op; only EpubReaderActivity overrides.
-  virtual bool captureProgressForSleep(KOReaderProgress& outProgress) { return false; }
+  virtual bool captureProgressForSleep(KOReaderProgress& outProgress, SyncedPositionMarker::Receipt& outReceipt) {
+    return false;
+  }
 #ifdef CP_TEST_CONSOLE
   // Test-console introspection (CMD:ACTIVITY): the cheapest possible
   // assertion that navigation landed where it should.

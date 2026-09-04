@@ -177,7 +177,11 @@ class OptionPopup {
     }
 
     fui::OptionDialogProps props;
-    props.title = title.c_str();
+    // Empty means no caption row at all, not a blank one: fui skips the slot
+    // (and its gap) on a null pointer but reserves a full line for "". Lets a
+    // host that already draws the question above the popup -- like
+    // ConfirmationActivity -- suppress the truncated duplicate inside it.
+    props.title = title.empty() ? nullptr : title.c_str();
     props.options = options;
     props.optionCount = count;
     props.verticalOptions = true;
