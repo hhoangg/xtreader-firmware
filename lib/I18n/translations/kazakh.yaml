@@ -100,6 +100,7 @@ STR_MOVE_FINISHED_TO_READ: "Оқылған кітаптарды Read қалта�
 STR_REFRESH_FREQ: "Жаңарту жиілігі"
 STR_CHECK_UPDATES: "Жаңартуларды тексеру"
 STR_LANGUAGE: "Тіл"
+STR_KEYBOARD_LAYOUTS: "Пернетақта орналасулары"
 STR_CLEAR_READING_CACHE: "Оқу кэшін тазалау"
 STR_USERNAME: "Пайдаланушы аты"
 STR_PASSWORD: "Құпия сөз"

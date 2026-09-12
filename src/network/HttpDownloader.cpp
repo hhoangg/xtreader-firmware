@@ -62,7 +62,7 @@ struct WifiPowerSaveGuard {
 #if defined(FREEINK_NET_WOLFSSL)
 HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std::string& username,
                                          const std::string& password, const std::string& bearerToken, Sink& sink,
-                                         uint32_t timeoutMs) {
+                                         uint32_t timeoutMs, bool downgradeRedirectsToHttp) {
   WifiPowerSaveGuard psGuard;
   std::string url = startUrl;
 
@@ -113,6 +113,13 @@ HttpDownloader::DownloadError runGetWolf(const std::string& startUrl, const std:
       if (location.empty() || !freeink::SecureHttpClient::resolveUrl(url, location, url)) {
         LOG_ERR("HTTP", "wolfSSL bad redirect: %d", status);
         return HttpDownloader::HTTP_ERROR;
+      }
+      if (downgradeRedirectsToHttp && url.rfind("https://", 0) == 0) {
+        // Fetch the redirect target over plain HTTP. GitHub's release-asset
+        // CDN serves its signed URLs on both schemes, and skipping the second
+        // TLS session removes its ~17KB record buffer -- the MEMORY_E /
+        // OOM-abort site on C3 heaps that sit near 45KB free.
+        url.replace(0, 8, "http://");
       }
       continue;
     }
@@ -444,10 +451,14 @@ HttpDownloader::DownloadError runDelete(const std::string& url, std::string& out
 // WiFiClient inside runGetWolf, so this is safe for non-TLS targets too.
 HttpDownloader::DownloadError runGetSecure(const std::string& url, const std::string& username,
                                            const std::string& password, const std::string& bearerToken, Sink& sink,
-                                           uint32_t timeoutMs = HttpDownloader::DEFAULT_TIMEOUT_MS) {
+                                           uint32_t timeoutMs = HttpDownloader::DEFAULT_TIMEOUT_MS,
+                                           bool downgradeRedirectsToHttp = false) {
 #if defined(FREEINK_NET_WOLFSSL)
-  return runGetWolf(url, username, password, bearerToken, sink, timeoutMs);
+  return runGetWolf(url, username, password, bearerToken, sink, timeoutMs, downgradeRedirectsToHttp);
 #else
+  // esp_http_client follows redirects internally; the downgrade only exists on
+  // the wolfSSL path, where the manual hop loop exposes the Location URL.
+  (void)downgradeRedirectsToHttp;
   return runGet(url, username, password, bearerToken, sink, timeoutMs);
 #endif
 }
@@ -512,7 +523,8 @@ bool HttpDownloader::deleteResource(const std::string& url, std::string& outResp
 
 HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& url, const std::string& destPath,
                                                              ProgressCallback progress, bool* cancelFlag,
-                                                             const std::string& username, const std::string& password) {
+                                                             const std::string& username, const std::string& password,
+                                                             bool downgradeRedirectsToHttp) {
   LOG_DBG("HTTP", "Downloading: %s -> %s", url.c_str(), destPath.c_str());
 
   if (Storage.exists(destPath.c_str())) {
@@ -529,7 +541,8 @@ HttpDownloader::DownloadError HttpDownloader::downloadToFile(const std::string& 
   sink.cancelFlag = cancelFlag;
   sink.write = [&file](const uint8_t* data, size_t len) { return file.write(data, len) == len; };
 
-  const DownloadError result = runGetSecure(url, username, password, "", sink);
+  const DownloadError result =
+      runGetSecure(url, username, password, "", sink, DEFAULT_TIMEOUT_MS, downgradeRedirectsToHttp);
   // Close before any remove() on the same path; DESTRUCTOR_CLOSES_FILE would
   // otherwise close only after the remove.
   file.close();
