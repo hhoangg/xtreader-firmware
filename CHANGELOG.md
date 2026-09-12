@@ -6,6 +6,53 @@ the GitHub release page. Write for someone holding the device, not for someone
 reading the commit log: name the behaviour that changed, not the code that
 changed. Anything with no user-visible effect belongs under "Under the hood".
 
+## 1.9.0
+
+Everything in this release comes from upstream CrossPoint 1.6.0. This fork adds
+nothing of its own here; it catches up.
+
+### Languages that need their own fonts now get them
+
+Scripts the built-in fonts could not draw - and the languages that use them -
+are served by fonts fetched to the SD card instead of being squeezed into
+flash. If you read in one of those languages, the text is now rendered rather
+than approximated.
+
+### Downloading a font no longer runs out of memory partway
+
+Font downloads could die mid-transfer, and on a reader with this little free
+heap that is the normal outcome rather than bad luck. Three things changed.
+The reader now asks the server for small pieces of each encrypted response
+instead of accepting the default large ones, so the memory it must find in one
+contiguous block drops from roughly 17 KB to almost nothing. It also checks it
+has enough free memory BEFORE starting, and releases the rebuildable font caches
+first, so a download that cannot succeed says so on screen instead of failing
+halfway. And the bulk of a font download now skips setting up a second
+encrypted session it did not need.
+
+Nothing about how your reader talks to the xtreader server changed.
+
+### Translations
+
+Catalan, Hebrew, Italian, Russian, Swedish and Valencian: 44 phrases reworded
+and 123 that had been falling back to English are now translated. Ukrainian and
+Russian got a further pass of their own. Bulgarian is new.
+
+### Under the hood
+
+- Eight commits merged from upstream CrossPoint 1.6.0, and the SDK moved with
+  them: tab icons and inline list headings in FreeInkUI, plus fixes to a
+  dropdown style, an SD power rail, a LoRa chip-select line and a progress-bar
+  overflow.
+- The small-pieces request above (RFC 6066 max_fragment_length) applies to every
+  encrypted connection the reader makes, not only font downloads. A server that
+  does not support it keeps the old behaviour, so nothing regresses on a server
+  that ignores it.
+- Flash grew by 20 KB, 17 KB of which is the new translation data. Static RAM is
+  unchanged.
+- The OPDS catalogue browser stayed removed; upstream's change to it does not
+  apply to this fork, which leaves that job to the xtreader server.
+
 ## 1.8.0
 
 ### Everything this fork adds now lives behind one icon
